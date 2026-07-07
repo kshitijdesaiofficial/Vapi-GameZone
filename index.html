@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>GameZone Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B0D12; --panel:#141821; --panel2:#1B202B; --border:#252B38;
+    --text:#EDEFF4; --muted:#8891A3; --gold:#F2B705; --danger:#FF5C5C; --ok:#3ECF8E;
+    --pc:#9B8CFB; --xsx:#3ECF8E; --xox:#FF7A59; --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;-webkit-tap-highlight-color:transparent;}
+  body{padding-bottom:40px;}
+  h1,h2,h3{font-family:'Space Grotesk',sans-serif;margin:0;}
+  .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
+  #app{max-width:720px;margin:0 auto;padding:0 14px;}
+
+  header{padding:20px 4px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);margin-bottom:14px;}
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px var(--gold);animation:pulse 1.6s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  .brand h1{font-size:19px;letter-spacing:.3px;}
+  .clock{font-size:12px;color:var(--muted);text-align:right;}
+  .clock .t{color:var(--text);font-size:14px;display:block;}
+  .sync-strip{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin:-6px 0 16px 2px;}
+  .sync-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex-shrink:0;transition:background .3s;}
+
+  nav.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;margin-bottom:16px;}
+  nav.tabs button{flex:1;white-space:nowrap;background:var(--panel);color:var(--muted);border:1px solid var(--border);padding:10px 12px;border-radius:10px;font-size:13px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer;}
+  nav.tabs button.active{background:var(--panel2);color:var(--gold);border-color:#3a3320;}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
+  .stat-row{display:flex;gap:10px;margin-bottom:14px;}
+  .stat{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
+  .stat .label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+  .stat .value{font-size:20px;font-weight:600;margin-top:2px;}
+  .stat .value.gold{color:var(--gold);}
+
+  .session-card{border-radius:var(--radius);padding:0;overflow:hidden;border:1px solid var(--border);margin-bottom:12px;background:var(--panel);}
+  .session-top{height:5px;}
+  .session-body{padding:14px;}
+  .session-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+  .session-head .sys{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;}
+  .badge{display:inline-block;font-size:11px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:20px;margin-left:6px;}
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:6px;animation:pulse 1.4s ease-in-out infinite;}
+  .session-metrics{display:flex;gap:10px;margin-bottom:10px;}
+  .metric{flex:1;background:var(--panel2);border-radius:10px;padding:8px 10px;}
+  .metric .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+  .metric .v{font-size:18px;font-weight:600;margin-top:2px;}
+  .metric .v.gold{color:var(--gold);}
+  .free-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:10px;}
+  .btn-row{display:flex;gap:8px;}
+  button.action{flex:1;border:none;border-radius:10px;padding:10px;font-weight:600;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;}
+  button.action:disabled{opacity:.55;cursor:not-allowed;}
+  .btn-primary{background:var(--gold);color:#1a1400;}
+  .btn-ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border) !important;}
+  .btn-danger{background:transparent;color:var(--danger);border:1px solid #4a2222 !important;}
+  .btn-mini{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:'Inter',sans-serif;}
+  .btn-mini:disabled{opacity:.55;cursor:not-allowed;}
+
+  .empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:13px;}
+  .err-text{font-size:11.5px;color:var(--danger);margin-top:8px;display:none;}
+
+  .tiles{display:flex;gap:8px;margin-bottom:12px;}
+  .tile{flex:1;border-radius:12px;padding:12px 8px;text-align:center;border:1.5px solid var(--border);background:var(--panel2);cursor:pointer;}
+  .tile.selected{border-color:var(--gold);background:#20210f;}
+  .tile.disabled{opacity:.4;cursor:not-allowed;}
+  .tile .name{font-size:12px;font-weight:700;font-family:'Space Grotesk',sans-serif;}
+  .tile .sub{font-size:10px;color:var(--muted);margin-top:2px;}
+  .tile .inuse{font-size:10px;color:var(--danger);margin-top:2px;}
+
+  .stepper{display:flex;align-items:center;gap:10px;justify-content:center;background:var(--panel2);border-radius:10px;padding:8px;}
+  .stepper button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:18px;cursor:pointer;}
+  .stepper .n{font-size:18px;font-weight:700;min-width:70px;text-align:center;}
+
+  label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px;margin-top:12px;}
+  input[type=datetime-local],input[type=number],input[type=date],input[type=month],select{
+    width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);
+    padding:10px;border-radius:10px;font-size:14px;font-family:'JetBrains Mono',monospace;
+  }
+  .pay-toggle{display:flex;gap:8px;}
+  .pay-toggle button{flex:1;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;}
+  .pay-toggle button.selected{background:var(--gold);color:#1a1400;border-color:var(--gold);}
+
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
+  .sheet{background:var(--panel);width:100%;max-width:720px;border-radius:18px 18px 0 0;padding:18px 16px 26px;border:1px solid var(--border);border-bottom:none;max-height:88vh;overflow-y:auto;}
+  .sheet h3{margin-bottom:12px;}
+  .close-x{float:right;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;color:var(--muted);font-weight:600;padding:6px 4px;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;}
+  td{padding:8px 4px;border-bottom:1px solid var(--border);}
+  .row-actions{display:flex;gap:6px;}
+  .filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  .filters > div{flex:1;min-width:110px;}
+
+  .daybar-row{display:flex;align-items:center;gap:8px;padding:5px 0;}
+  .daybar-row .d{width:26px;font-size:11px;color:var(--muted);}
+  .daybar-row .track{flex:1;background:var(--panel2);border-radius:6px;height:16px;overflow:hidden;}
+  .daybar-row .fill{background:var(--gold);height:100%;border-radius:6px;}
+  .daybar-row .amt{width:64px;text-align:right;font-size:11.5px;}
+
+  .stack-bar{display:flex;height:22px;border-radius:8px;overflow:hidden;margin-bottom:8px;border:1px solid var(--border);}
+  .stack-legend{display:flex;gap:14px;font-size:11px;color:var(--muted);flex-wrap:wrap;}
+  .legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;}
+
+  .hint{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:4px;}
+  .section-title{font-size:14px;margin-bottom:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-family:'Inter',sans-serif;font-weight:700;}
+  .divider{height:1px;background:var(--border);margin:16px 0;}
+  a.export{color:var(--gold);text-decoration:none;font-size:12.5px;font-weight:600;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><span class="dot"></span><h1>GameZone Console</h1></div>
+    <div class="clock" id="clockBox"><span id="clockDate"></span><span class="t mono" id="clockTime"></span></div>
+  </header>
+  <div class="sync-strip"><span class="sync-dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="active" class="active">Live</button>
+    <button data-tab="daily">Today</button>
+    <button data-tab="monthly">Month</button>
+    <button data-tab="history">History</button>
+  </nav>
+
+  <main>
+    <section id="tab-active"></section>
+    <section id="tab-daily" hidden></section>
+    <section id="tab-monthly" hidden></section>
+    <section id="tab-history" hidden></section>
+  </main>
+</div>
+<div id="modal-root"></div>
+
+<script>
+// ======================================================================
+// 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
+//    See gamezone-backend.gs for the script and setup steps.
+// ======================================================================
+const API_URL = 'https://script.google.com/macros/s/AKfycbzMDFVFtbJ0GmGTD-qBr4vYc5E2KXRbNVy4R0uVzEMr15SP0RY7xXmTL-LdZTs6w1rduQ/exec';
+
+function isConfigured(){
+  return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
+}
+
+async function apiGet(action, params){
+  const url = new URL(API_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params||{}).forEach(([k,v])=>url.searchParams.set(k, v));
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+async function apiPost(action, payload){
+  // text/plain avoids a CORS preflight that Apps Script web apps don't handle
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: {'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify(Object.assign({action}, payload||{}))
+  });
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+const SYSTEMS = {
+  pc:  { name:'Gaming PC',       short:'PC',  color:'#9B8CFB', max:2, rates:{1:120,2:100} },
+  xsx: { name:'Xbox Series X',   short:'XSX', color:'#3ECF8E', max:4, rates:{1:110,2:100,3:80,4:70} },
+  xox: { name:'Xbox One X',      short:'XOX', color:'#FF7A59', max:4, rates:{1:90,2:80,3:70,4:60} },
+};
+const SYS_KEYS = Object.keys(SYSTEMS);
+
+let activeSessions = [];
+let history = [];
+let currentTab = 'active';
+let newSessionSys = null;
+let newSessionPlayers = 1;
+let newSessionCustomStart = null;
+let lastSyncTime = null;
+let syncFailStreak = 0;
+
+function hourlyRate(sysKey, players){ return SYSTEMS[sysKey].rates[players] * players; }
+function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
+function pad(n){ return n.toString().padStart(2,'0'); }
+function fmtTime(ts){ const d=new Date(ts); return pad(d.getHours()%12===0?12:d.getHours()%12)+':'+pad(d.getMinutes())+' '+(d.getHours()<12?'AM':'PM'); }
+function fmtDateShort(ts){ const d=new Date(ts); return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}); }
+function dateKey(ts){ const d=new Date(ts); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+function monthKey(dk){ return dk.slice(0,7); }
+function todayKey(){ return dateKey(Date.now()); }
+function thisMonthKey(){ return todayKey().slice(0,7); }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function toLocalInputValue(ts){
+  const d=new Date(ts); const off=d.getTimezoneOffset();
+  const local=new Date(d.getTime()-off*60000);
+  return local.toISOString().slice(0,16);
+}
+function setButtonBusy(btn, busyText){
+  if(!btn) return ()=>{};
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = busyText;
+  return ()=>{ btn.disabled = false; btn.textContent = original; };
+}
+function showInlineError(id, msg){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.textContent = msg; el.style.display = 'block';
+}
+
+// ---------- Sync bookkeeping ----------
+function syncOk(){ lastSyncTime = Date.now(); syncFailStreak = 0; updateSyncStatus(); }
+function syncFail(e){ syncFailStreak++; console.error(e); updateSyncStatus(); }
+
+async function initialLoad(){
+  try{
+    const data = await apiGet('getAll');
+    activeSessions = data.activeSessions; history = data.history;
+    syncOk();
+  }catch(e){ syncFail(e); }
+}
+async function pollState(){
+  try{
+    const data = await apiGet('getAll');
+    if(JSON.stringify(data.activeSessions)!==JSON.stringify(activeSessions) || JSON.stringify(data.history)!==JSON.stringify(history)){
+      activeSessions = data.activeSessions; history = data.history;
+      renderCurrentTab();
+    }
+    syncOk();
+  }catch(e){ syncFail(e); }
+}
+
+// ---------- Clock ----------
+function tickClock(){
+  const d = new Date();
+  document.getElementById('clockDate').textContent = d.toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short'})+'  ';
+  document.getElementById('clockTime').textContent = pad(d.getHours()%12===0?12:d.getHours()%12)+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())+' '+(d.getHours()<12?'AM':'PM');
+  updateLiveMetrics();
+  updateSyncStatus();
+}
+function updateSyncStatus(){
+  const dot = document.getElementById('syncDot');
+  const txt = document.getElementById('syncText');
+  if(!dot || !txt) return;
+  if(syncFailStreak >= 2){
+    dot.style.background = 'var(--danger)';
+    txt.textContent = 'Connection trouble — retrying…';
+    return;
+  }
+  dot.style.background = 'var(--ok)';
+  if(lastSyncTime == null){ txt.textContent = 'Connecting…'; return; }
+  const secs = Math.floor((Date.now()-lastSyncTime)/1000);
+  txt.textContent = 'Live on all devices · synced ' + (secs < 2 ? 'just now' : secs+'s ago');
+}
+function updateLiveMetrics(){
+  document.querySelectorAll('[data-live-start]').forEach(el=>{
+    const start = parseInt(el.getAttribute('data-live-start'));
+    const free = parseInt(el.getAttribute('data-live-free')||'0');
+    const rate = parseFloat(el.getAttribute('data-live-rate'));
+    const elapsedMs = Date.now() - start;
+    const billableMs = Math.max(0, elapsedMs - free*60000);
+    const h = Math.floor(elapsedMs/3600000), m = Math.floor((elapsedMs%3600000)/60000), s=Math.floor((elapsedMs%60000)/1000);
+    const timerEl = el.querySelector('.timer-val');
+    if(timerEl) timerEl.textContent = pad(h)+':'+pad(m)+':'+pad(s);
+    const bill = (billableMs/3600000) * rate;
+    const billEl = el.querySelector('.bill-val');
+    if(billEl) billEl.textContent = money(bill);
+  });
+}
+
+// ---------- Tabs ----------
+document.getElementById('tabs').addEventListener('click', e=>{
+  const btn = e.target.closest('button[data-tab]');
+  if(!btn) return;
+  currentTab = btn.getAttribute('data-tab');
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active', b===btn));
+  ['active','daily','monthly','history'].forEach(t=>{
+    document.getElementById('tab-'+t).hidden = (t!==currentTab);
+  });
+  renderCurrentTab();
+});
+function renderCurrentTab(){
+  if(currentTab==='active') renderActiveTab();
+  else if(currentTab==='daily') renderDailyTab();
+  else if(currentTab==='monthly') renderMonthlyTab();
+  else renderHistoryTab();
+}
+
+// ---------- ACTIVE TAB ----------
+function renderActiveTab(){
+  const el = document.getElementById('tab-active');
+  const todayEntries = history.filter(h=>h.date===todayKey());
+  const todayTotal = todayEntries.reduce((s,h)=>s+h.total,0);
+  let html = '';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Today so far</div><div class="value gold mono">'+money(todayTotal)+'</div></div>';
+  html += '<div class="stat"><div class="label">Sessions live</div><div class="value mono">'+activeSessions.length+'</div></div>';
+  html += '<div class="stat"><div class="label">Closed today</div><div class="value mono">'+todayEntries.length+'</div></div>';
+  html += '</div>';
+
+  if(activeSessions.length===0){
+    html += '<div class="card empty">No consoles running right now.<br>Start a session below when a customer sits down.</div>';
+  } else {
+    activeSessions.slice().sort((a,b)=>b.start-a.start).forEach(s=>{
+      const sys = SYSTEMS[s.sys];
+      const rate = hourlyRate(s.sys, s.players);
+      html += '<div class="session-card">';
+      html += '<div class="session-top" style="background:'+sys.color+'"></div>';
+      html += '<div class="session-body" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+rate+'">';
+      html += '<div class="session-head"><div class="sys" style="color:'+sys.color+'">'+sys.name+'<span class="badge">'+s.players+' player'+(s.players>1?'s':'')+'</span></div><div class="hint mono">from '+fmtTime(s.start)+'</div></div>';
+      html += '<div class="session-metrics">';
+      html += '<div class="metric"><div class="l"><span class="live-dot"></span>Elapsed</div><div class="v timer-val mono">00:00:00</div></div>';
+      html += '<div class="metric"><div class="l">Live bill</div><div class="v gold bill-val mono">'+money(0)+'</div></div>';
+      html += '<div class="metric"><div class="l">Rate/hr</div><div class="v mono">'+money(rate)+'</div></div>';
+      html += '</div>';
+      html += '<div class="free-row"><span>Free/comp time given: <b class="mono">'+(s.freeMin||0)+' min</b></span><button class="btn-mini" data-add-free="'+s.id+'">+15 min free</button></div>';
+      html += '<div class="btn-row">';
+      html += '<button class="action btn-primary" data-checkout="'+s.id+'">Checkout</button>';
+      html += '<button class="action btn-danger" data-cancel="'+s.id+'">Cancel</button>';
+      html += '</div></div></div>';
+    });
+  }
+
+  html += '<div class="divider"></div>';
+  html += '<div class="card">';
+  html += '<div class="section-title">Start a session</div>';
+  html += '<div class="tiles" id="sysTiles">';
+  SYS_KEYS.forEach(k=>{
+    const sys = SYSTEMS[k];
+    const busy = activeSessions.some(s=>s.sys===k);
+    html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?'border-color:'+sys.color:'')+'">';
+    html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
+    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">from '+money(sys.rates[1])+'/hr</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  if(newSessionSys){
+    const sys = SYSTEMS[newSessionSys];
+    if(newSessionPlayers > sys.max) newSessionPlayers = sys.max;
+    html += '<label>Players</label>';
+    html += '<div class="stepper"><button data-players-dec>−</button><div class="n mono">'+newSessionPlayers+'</div><button data-players-inc>+</button></div>';
+    html += '<div class="hint">Rate: '+money(sys.rates[newSessionPlayers])+' / player / hr &nbsp;·&nbsp; Total: <b class="mono">'+money(hourlyRate(newSessionSys,newSessionPlayers))+'/hr</b></div>';
+    html += '<label>Start time</label>';
+    html += '<input type="datetime-local" id="startTimeInput" value="'+toLocalInputValue(newSessionCustomStart||Date.now())+'">';
+    html += '<div style="margin-top:14px;"><button class="action btn-primary" id="startSessionBtn" style="width:100%">Start session</button></div>';
+    html += '<div class="err-text" id="startErr"></div>';
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+  attachActiveHandlers();
+  updateLiveMetrics();
+}
+
+function attachActiveHandlers(){
+  document.querySelectorAll('[data-pick-sys]').forEach(t=>t.addEventListener('click', ()=>{
+    const k = t.getAttribute('data-pick-sys');
+    if(activeSessions.some(s=>s.sys===k)) return;
+    newSessionSys = (newSessionSys===k) ? null : k;
+    newSessionPlayers = 1;
+    renderActiveTab();
+  }));
+  const dec = document.querySelector('[data-players-dec]');
+  const inc = document.querySelector('[data-players-inc]');
+  if(dec) dec.addEventListener('click', ()=>{ if(newSessionPlayers>1){ newSessionPlayers--; renderActiveTab(); }});
+  if(inc) inc.addEventListener('click', ()=>{ const max=SYSTEMS[newSessionSys].max; if(newSessionPlayers<max){ newSessionPlayers++; renderActiveTab(); }});
+  const startBtn = document.getElementById('startSessionBtn');
+  if(startBtn) startBtn.addEventListener('click', startSession);
+  const startInput = document.getElementById('startTimeInput');
+  if(startInput) startInput.addEventListener('change', e=>{ newSessionCustomStart = new Date(e.target.value).getTime(); });
+
+  document.querySelectorAll('[data-add-free]').forEach(b=>b.addEventListener('click', async ()=>{
+    const id = b.getAttribute('data-add-free');
+    const restore = setButtonBusy(b, '…');
+    try{
+      const data = await apiPost('addFreeTime', {id, minutes:15});
+      activeSessions = data.activeSessions; history = data.history;
+      syncOk(); renderActiveTab();
+    }catch(e){ syncFail(e); restore(); }
+  }));
+  document.querySelectorAll('[data-checkout]').forEach(b=>b.addEventListener('click', ()=>{
+    openCheckoutModal(b.getAttribute('data-checkout'));
+  }));
+  document.querySelectorAll('[data-cancel]').forEach(b=>b.addEventListener('click', ()=>{
+    openCancelConfirm(b.getAttribute('data-cancel'));
+  }));
+}
+
+async function startSession(){
+  const btn = document.getElementById('startSessionBtn');
+  const restore = setButtonBusy(btn, 'Starting…');
+  const start = newSessionCustomStart || Date.now();
+  try{
+    const data = await apiPost('startSession', { id: uid(), sys: newSessionSys, players: newSessionPlayers, start, freeMin: 0 });
+    activeSessions = data.activeSessions; history = data.history;
+    syncOk();
+    newSessionSys = null; newSessionPlayers = 1; newSessionCustomStart = null;
+    renderActiveTab();
+  }catch(e){
+    syncFail(e); restore();
+    showInlineError('startErr', "Couldn't reach the server — check your connection and try again.");
+  }
+}
+
+// ---------- Checkout modal ----------
+function openCheckoutModal(id){
+  const s = activeSessions.find(x=>x.id===id);
+  if(!s) return;
+  const sys = SYSTEMS[s.sys];
+  const rate = hourlyRate(s.sys, s.players);
+  const elapsedMin = (Date.now()-s.start)/60000;
+  const billableMin = Math.max(0, elapsedMin - (s.freeMin||0));
+  const suggestedHours = Math.max(0.25, Math.ceil(billableMin/15)*15/60);
+  let payment = 'cash';
+
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovCheckout">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3 style="color:${sys.color}">Checkout · ${sys.name}</h3>
+        <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · rate ${money(rate)}/hr${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
+        <label>Billable hours</label>
+        <input type="number" id="hoursInput" step="0.25" min="0.25" value="${suggestedHours}">
+        <label>Mode of payment</label>
+        <div class="pay-toggle">
+          <button data-pay="cash" class="selected">Cash</button>
+          <button data-pay="online">Online</button>
+        </div>
+        <div class="stat" style="margin-top:14px;">
+          <div class="label">Total bill</div>
+          <div class="value gold mono" id="totalPreview">${money(suggestedHours*rate)}</div>
+        </div>
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
+        <div class="err-text" id="checkoutErr"></div>
+      </div>
+    </div>`;
+
+  const hoursInput = document.getElementById('hoursInput');
+  const totalPreview = document.getElementById('totalPreview');
+  function recompute(){ totalPreview.textContent = money(parseFloat(hoursInput.value||0)*rate); }
+  hoursInput.addEventListener('input', recompute);
+  document.querySelectorAll('[data-pay]').forEach(b=>b.addEventListener('click', ()=>{
+    payment = b.getAttribute('data-pay');
+    document.querySelectorAll('[data-pay]').forEach(x=>x.classList.toggle('selected', x===b));
+  }));
+  document.getElementById('confirmCheckout').addEventListener('click', async function(){
+    const hours = Math.max(0.25, parseFloat(hoursInput.value||suggestedHours));
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('checkoutSession', { id, hours, payment, hourly: rate });
+      activeSessions = data.activeSessions; history = data.history;
+      syncOk(); closeModal(); renderCurrentTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('checkoutErr', "Couldn't save this — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovCheckout').addEventListener('click', e=>{ if(e.target.id==='ovCheckout') closeModal(); });
+}
+
+function openCancelConfirm(id){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovCancel">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Cancel this session?</h3>
+        <div class="hint">This removes it without adding anything to collections. Use this only for a mistaken start — not for a customer who already played.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep running</button>
+          <button class="action btn-danger" id="confirmCancel">Yes, cancel it</button>
+        </div>
+        <div class="err-text" id="cancelErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmCancel').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Cancelling…');
+    try{
+      const data = await apiPost('cancelSession', {id});
+      activeSessions = data.activeSessions; history = data.history;
+      syncOk(); closeModal(); renderCurrentTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('cancelErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovCancel').addEventListener('click', e=>{ if(e.target.id==='ovCancel') closeModal(); });
+}
+
+function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+// ---------- DAILY TAB ----------
+let dailySelectedDate = todayKey();
+function renderDailyTab(){
+  const el = document.getElementById('tab-daily');
+  let html = '<label>Date</label><input type="date" id="dailyDate" value="'+dailySelectedDate+'">';
+  const entries = history.filter(h=>h.date===dailySelectedDate).sort((a,b)=>a.start-b.start);
+  const total = entries.reduce((s,h)=>s+h.total,0);
+  const cash = entries.filter(h=>h.payment==='cash').reduce((s,h)=>s+h.total,0);
+  const online = entries.filter(h=>h.payment==='online').reduce((s,h)=>s+h.total,0);
+
+  html += '<div class="stat-row" style="margin-top:12px;">';
+  html += '<div class="stat"><div class="label">Total</div><div class="value gold mono">'+money(total)+'</div></div>';
+  html += '<div class="stat"><div class="label">Cash</div><div class="value mono">'+money(cash)+'</div></div>';
+  html += '<div class="stat"><div class="label">Online</div><div class="value mono">'+money(online)+'</div></div>';
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">By system</div>';
+  html += renderSystemStackBar(entries);
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Sessions ('+entries.length+')</div>';
+  if(entries.length===0){
+    html += '<div class="empty">No sessions closed on this date.</div>';
+  } else {
+    html += '<table><tr><th>System</th><th>Pl.</th><th>Time</th><th>Hrs</th><th>Total</th><th>Pay</th></tr>';
+    entries.forEach(h=>{
+      const sys = SYSTEMS[h.sys];
+      html += '<tr><td style="color:'+sys.color+'">'+sys.short+'</td><td class="mono">'+h.players+'</td><td class="mono">'+fmtTime(h.start)+'</td><td class="mono">'+h.hours+'</td><td class="mono">'+money(h.total)+'</td><td>'+(h.payment==='cash'?'Cash':'Online')+'</td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+  document.getElementById('dailyDate').addEventListener('change', e=>{ dailySelectedDate = e.target.value; renderDailyTab(); });
+}
+
+function renderSystemStackBar(entries){
+  const totals = {}; SYS_KEYS.forEach(k=>totals[k]=0);
+  entries.forEach(h=>totals[h.sys]+=h.total);
+  const grand = Object.values(totals).reduce((a,b)=>a+b,0);
+  let bar = '<div class="stack-bar">';
+  if(grand===0){ bar += '<div style="width:100%;background:'+'#20232c'+'"></div>'; }
+  else { SYS_KEYS.forEach(k=>{ const pct = totals[k]/grand*100; if(pct>0) bar += '<div style="width:'+pct+'%;background:'+SYSTEMS[k].color+'"></div>'; }); }
+  bar += '</div><div class="stack-legend">';
+  SYS_KEYS.forEach(k=>{ bar += '<span><span class="legend-dot" style="background:'+SYSTEMS[k].color+'"></span>'+SYSTEMS[k].short+' · '+money(totals[k])+'</span>'; });
+  bar += '</div>';
+  return bar;
+}
+
+// ---------- MONTHLY TAB ----------
+let monthlySelected = thisMonthKey();
+function renderMonthlyTab(){
+  const el = document.getElementById('tab-monthly');
+  let html = '<label>Month</label><input type="month" id="monthlyMonth" value="'+monthlySelected+'">';
+  const entries = history.filter(h=>monthKey(h.date)===monthlySelected);
+  const total = entries.reduce((s,h)=>s+h.total,0);
+  const cash = entries.filter(h=>h.payment==='cash').reduce((s,h)=>s+h.total,0);
+  const online = entries.filter(h=>h.payment==='online').reduce((s,h)=>s+h.total,0);
+  const [y,m] = monthlySelected.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const perDay = {};
+  for(let d=1; d<=daysInMonth; d++) perDay[d]=0;
+  entries.forEach(h=>{ const d = Number(h.date.split('-')[2]); perDay[d]=(perDay[d]||0)+h.total; });
+  const maxDay = Math.max(1, ...Object.values(perDay));
+  const activeDays = Object.values(perDay).filter(v=>v>0).length;
+  const avg = activeDays ? total/activeDays : 0;
+
+  html += '<div class="stat-row" style="margin-top:12px;">';
+  html += '<div class="stat"><div class="label">Total</div><div class="value gold mono">'+money(total)+'</div></div>';
+  html += '<div class="stat"><div class="label">Cash</div><div class="value mono">'+money(cash)+'</div></div>';
+  html += '<div class="stat"><div class="label">Online</div><div class="value mono">'+money(online)+'</div></div>';
+  html += '</div>';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Sessions</div><div class="value mono">'+entries.length+'</div></div>';
+  html += '<div class="stat"><div class="label">Avg / active day</div><div class="value mono">'+money(avg)+'</div></div>';
+  html += '</div>';
+
+  html += '<div class="card"><div class="section-title">By system</div>'+renderSystemStackBar(entries)+'</div>';
+
+  html += '<div class="card"><div class="section-title">Day by day</div>';
+  for(let d=1; d<=daysInMonth; d++){
+    const amt = perDay[d];
+    const pct = Math.max(2, amt/maxDay*100);
+    html += '<div class="daybar-row"><div class="d mono">'+pad(d)+'</div><div class="track"><div class="fill" style="width:'+pct+'%"></div></div><div class="amt mono">'+(amt?money(amt):'—')+'</div></div>';
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+  document.getElementById('monthlyMonth').addEventListener('change', e=>{ monthlySelected = e.target.value; renderMonthlyTab(); });
+}
+
+// ---------- HISTORY TAB ----------
+let histFilters = { from:'', to:'', sys:'all', pay:'all' };
+function renderHistoryTab(){
+  const el = document.getElementById('tab-history');
+  let entries = history.slice().sort((a,b)=>b.start-a.start);
+  if(histFilters.from) entries = entries.filter(h=>h.date>=histFilters.from);
+  if(histFilters.to) entries = entries.filter(h=>h.date<=histFilters.to);
+  if(histFilters.sys!=='all') entries = entries.filter(h=>h.sys===histFilters.sys);
+  if(histFilters.pay!=='all') entries = entries.filter(h=>h.payment===histFilters.pay);
+  const total = entries.reduce((s,h)=>s+h.total,0);
+
+  let html = '<div class="card">';
+  html += '<div class="filters">';
+  html += '<div><label>From</label><input type="date" id="fFrom" value="'+histFilters.from+'"></div>';
+  html += '<div><label>To</label><input type="date" id="fTo" value="'+histFilters.to+'"></div>';
+  html += '</div><div class="filters">';
+  html += '<div><label>System</label><select id="fSys"><option value="all">All</option>'+SYS_KEYS.map(k=>'<option value="'+k+'" '+(histFilters.sys===k?'selected':'')+'>'+SYSTEMS[k].name+'</option>').join('')+'</select></div>';
+  html += '<div><label>Payment</label><select id="fPay"><option value="all">All</option><option value="cash" '+(histFilters.pay==='cash'?'selected':'')+'>Cash</option><option value="online" '+(histFilters.pay==='online'?'selected':'')+'>Online</option></select></div>';
+  html += '</div>';
+  html += '<div class="hint">'+entries.length+' sessions · total <b class="mono" style="color:var(--gold)">'+money(total)+'</b></div>';
+  html += '<div style="margin-top:8px;"><a href="#" class="export" id="exportCsv">Export CSV ↓</a></div>';
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Backup & restore</div>';
+  html += '<div class="hint">Your Google Sheet is already a live backup you can open any time — but a local file is a good extra safety net before any big change.</div>';
+  html += '<div class="btn-row" style="margin-top:10px;">';
+  html += '<button class="action btn-ghost" id="downloadBackup">Download backup</button>';
+  html += '<label class="action btn-ghost" for="restoreFileInput" style="text-align:center;display:flex;align-items:center;justify-content:center;margin:0;cursor:pointer;">Restore backup</label>';
+  html += '</div>';
+  html += '<input type="file" id="restoreFileInput" accept="application/json" style="display:none">';
+  html += '<div class="hint" id="restoreMsg" style="display:none;color:var(--danger);margin-top:8px;"></div>';
+  html += '</div>';
+
+  html += '<div class="card">';
+  if(entries.length===0){ html += '<div class="empty">No sessions match these filters.</div>'; }
+  else {
+    html += '<table><tr><th>Date</th><th>Sys</th><th>Pl.</th><th>Start</th><th>Hrs</th><th>Total</th><th>Pay</th><th></th></tr>';
+    entries.forEach(h=>{
+      const sys = SYSTEMS[h.sys];
+      html += '<tr><td class="mono">'+fmtDateShort(h.start)+'</td><td style="color:'+sys.color+'">'+sys.short+'</td><td class="mono">'+h.players+'</td><td class="mono">'+fmtTime(h.start)+'</td><td class="mono">'+h.hours+'</td><td class="mono">'+money(h.total)+'</td><td>'+(h.payment==='cash'?'Cash':'Online')+'</td>';
+      html += '<td class="row-actions"><button class="btn-mini" data-edit-hist="'+h.id+'">Edit</button><button class="btn-mini" data-del-hist="'+h.id+'" style="color:var(--danger)">Del</button></td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+  document.getElementById('fFrom').addEventListener('change', e=>{ histFilters.from=e.target.value; renderHistoryTab(); });
+  document.getElementById('fTo').addEventListener('change', e=>{ histFilters.to=e.target.value; renderHistoryTab(); });
+  document.getElementById('fSys').addEventListener('change', e=>{ histFilters.sys=e.target.value; renderHistoryTab(); });
+  document.getElementById('fPay').addEventListener('change', e=>{ histFilters.pay=e.target.value; renderHistoryTab(); });
+  document.getElementById('exportCsv').addEventListener('click', e=>{ e.preventDefault(); exportCsv(entries); });
+  document.getElementById('downloadBackup').addEventListener('click', downloadBackup);
+  document.getElementById('restoreFileInput').addEventListener('change', handleRestoreFile);
+  document.querySelectorAll('[data-edit-hist]').forEach(b=>b.addEventListener('click', ()=>openEditHistModal(b.getAttribute('data-edit-hist'))));
+  document.querySelectorAll('[data-del-hist]').forEach(b=>b.addEventListener('click', ()=>openDeleteHistConfirm(b.getAttribute('data-del-hist'))));
+}
+
+function openEditHistModal(id){
+  const h = history.find(x=>x.id===id);
+  if(!h) return;
+  const sys = SYSTEMS[h.sys];
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovEdit">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3 style="color:${sys.color}">Edit · ${sys.name}</h3>
+        <div class="hint">${fmtDateShort(h.start)} · started ${fmtTime(h.start)}</div>
+        <label>Players</label>
+        <div class="stepper"><button id="epDec">−</button><div class="n mono" id="epVal">${h.players}</div><button id="epInc">+</button></div>
+        <label>Hours</label>
+        <input type="number" id="ehHours" step="0.25" min="0.25" value="${h.hours}">
+        <label>Mode of payment</label>
+        <div class="pay-toggle">
+          <button data-epay="cash" class="${h.payment==='cash'?'selected':''}">Cash</button>
+          <button data-epay="online" class="${h.payment==='online'?'selected':''}">Online</button>
+        </div>
+        <div class="stat" style="margin-top:14px;"><div class="label">Total bill</div><div class="value gold mono" id="ePreview">${money(h.total)}</div></div>
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="saveEdit">Save changes</button></div>
+        <div class="err-text" id="editErr"></div>
+      </div>
+    </div>`;
+  let players = h.players, payment = h.payment;
+  function recompute(){
+    const rate = hourlyRate(h.sys, players);
+    const hours = parseFloat(document.getElementById('ehHours').value||h.hours);
+    document.getElementById('ePreview').textContent = money(rate*hours);
+  }
+  document.getElementById('epDec').addEventListener('click', ()=>{ if(players>1){ players--; document.getElementById('epVal').textContent=players; recompute(); }});
+  document.getElementById('epInc').addEventListener('click', ()=>{ if(players<sys.max){ players++; document.getElementById('epVal').textContent=players; recompute(); }});
+  document.getElementById('ehHours').addEventListener('input', recompute);
+  document.querySelectorAll('[data-epay]').forEach(b=>b.addEventListener('click', ()=>{
+    payment=b.getAttribute('data-epay');
+    document.querySelectorAll('[data-epay]').forEach(x=>x.classList.toggle('selected', x===b));
+  }));
+  document.getElementById('saveEdit').addEventListener('click', async function(){
+    const hours = Math.max(0.25, parseFloat(document.getElementById('ehHours').value||h.hours));
+    const hourly = hourlyRate(h.sys, players);
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('editHistory', { id, players, hours, payment, hourly });
+      activeSessions = data.activeSessions; history = data.history;
+      syncOk(); closeModal(); renderHistoryTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('editErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovEdit').addEventListener('click', e=>{ if(e.target.id==='ovEdit') closeModal(); });
+}
+
+function openDeleteHistConfirm(id){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovDel">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Delete this entry?</h3>
+        <div class="hint">This removes it from history and all reports (and from the History sheet). This can't be undone.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep it</button>
+          <button class="action btn-danger" id="confirmDel">Delete</button>
+        </div>
+        <div class="err-text" id="deleteErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmDel').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Deleting…');
+    try{
+      const data = await apiPost('deleteHistory', {id});
+      activeSessions = data.activeSessions; history = data.history;
+      syncOk(); closeModal(); renderHistoryTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('deleteErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovDel').addEventListener('click', e=>{ if(e.target.id==='ovDel') closeModal(); });
+}
+
+function downloadBackup(){
+  const payload = { exportedAt: new Date().toISOString(), activeSessions, history };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'gamezone-backup-'+todayKey()+'.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function handleRestoreFile(e){
+  const file = e.target.files[0];
+  const msg = document.getElementById('restoreMsg');
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const data = JSON.parse(reader.result);
+      if(!Array.isArray(data.activeSessions) || !Array.isArray(data.history)) throw new Error('bad shape');
+      msg.style.display = 'none';
+      openRestoreConfirm(data);
+    }catch(err){
+      msg.textContent = "That file doesn't look like a GameZone backup.";
+      msg.style.display = 'block';
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function openRestoreConfirm(data){
+  const root = document.getElementById('modal-root');
+  const when = data.exportedAt ? fmtDateShort(new Date(data.exportedAt).getTime()) : 'this file';
+  root.innerHTML = `
+    <div class="overlay" id="ovRestore">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Restore this backup?</h3>
+        <div class="hint">Found ${data.activeSessions.length} active session(s) and ${data.history.length} history entries, backed up ${when}. This replaces everything in the Google Sheet, on every device — it can't be undone either.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Cancel</button>
+          <button class="action btn-primary" id="confirmRestore">Replace with backup</button>
+        </div>
+        <div class="err-text" id="restoreConfirmErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmRestore').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Restoring…');
+    try{
+      const result = await apiPost('restoreAll', { activeSessions: data.activeSessions, history: data.history });
+      activeSessions = result.activeSessions; history = result.history;
+      syncOk(); closeModal(); renderCurrentTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('restoreConfirmErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovRestore').addEventListener('click', e=>{ if(e.target.id==='ovRestore') closeModal(); });
+}
+
+function exportCsv(entries){
+  const rows = [['Date','System','Players','Start','Hours','Rate/hr','Total','Payment']];
+  entries.forEach(h=>{
+    rows.push([h.date, SYSTEMS[h.sys].name, h.players, fmtTime(h.start), h.hours, h.hourly, h.total, h.payment]);
+  });
+  const csv = rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'gamezone-history.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ---------- Setup banner (shown until API_URL is filled in) ----------
+function showSetupBanner(){
+  document.getElementById('app').innerHTML = `
+    <div style="max-width:480px;margin:60px auto 0;padding:24px;text-align:center;">
+      <h2 style="margin-bottom:14px;">Almost there</h2>
+      <p class="hint" style="font-size:13.5px;">This file isn't connected to its Google Sheet backend yet.</p>
+      <p class="hint" style="font-size:13.5px;">Open this HTML file in a text editor, find the line near the top of the &lt;script&gt; that starts with <code>const API_URL</code>, and paste in your Apps Script Web App URL. Then reopen this page.</p>
+    </div>`;
+}
+
+// ---------- Init ----------
+(async function init(){
+  if(!isConfigured()){ showSetupBanner(); return; }
+  await initialLoad();
+  renderActiveTab();
+  tickClock();
+  setInterval(tickClock, 1000);
+  setInterval(pollState, 6000);
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') pollState(); });
+  window.addEventListener('focus', pollState);
+})();
+</script>
+</body>
+</html>
