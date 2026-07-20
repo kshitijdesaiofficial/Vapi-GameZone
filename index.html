@@ -5,77 +5,95 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>GameZone Sales Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0B0D12; --panel:#141821; --panel2:#1B202B; --border:#252B38;
+    --bg:#090B10; --panel:rgba(18,21,29,0.72); --panel2:rgba(27,32,44,0.8); --border:rgba(255,255,255,0.09);
     --text:#EDEFF4; --muted:#8891A3; --gold:#F2B705; --danger:#FF5C5C; --ok:#3ECF8E;
-    --pc:#9B8CFB; --xsx:#3ECF8E; --xox:#FF7A59; --radius:14px;
+    --pc:#9B7BFF; --xsx:#5FD34A; --xox:#2FA8E8; --radius:14px;
   }
   *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;-webkit-tap-highlight-color:transparent;}
-  body{padding-bottom:40px;}
-  h1,h2,h3{font-family:'Space Grotesk',sans-serif;margin:0;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;-webkit-tap-highlight-color:transparent;overflow-x:hidden;}
+  body{padding-bottom:40px;position:relative;}
+  h1,h2,h3{font-family:'Rajdhani',sans-serif;margin:0;}
   .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}
-  #app{max-width:720px;margin:0 auto;padding:0 14px;}
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+  .bg-glow{position:fixed;width:60vw;height:60vw;max-width:520px;max-height:520px;border-radius:50%;filter:blur(90px);opacity:.25;z-index:0;pointer-events:none;}
+  .bg-glow-1{top:-12%;left:-16%;background:radial-gradient(circle, var(--xsx), transparent 70%);animation:drift1 22s ease-in-out infinite alternate;}
+  .bg-glow-2{bottom:-16%;right:-16%;background:radial-gradient(circle, var(--xox), transparent 70%);animation:drift2 26s ease-in-out infinite alternate;}
+  @keyframes drift1{from{transform:translate(0,0);}to{transform:translate(6%,8%);}}
+  @keyframes drift2{from{transform:translate(0,0);}to{transform:translate(-6%,-8%);}}
+  #app{max-width:720px;margin:0 auto;padding:0 14px;position:relative;z-index:1;}
 
   header{padding:20px 4px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);margin-bottom:14px;}
   .brand{display:flex;align-items:center;gap:10px;}
   .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px var(--gold);animation:pulse 1.6s ease-in-out infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
-  .brand h1{font-size:19px;letter-spacing:.3px;}
+  .brand h1{font-size:21px;font-weight:700;letter-spacing:.4px;background:linear-gradient(90deg,#fff,var(--xsx) 55%,var(--xox));-webkit-background-clip:text;background-clip:text;color:transparent;}
   .clock{font-size:12px;color:var(--muted);text-align:right;}
   .clock .t{color:var(--text);font-size:14px;display:block;}
   .sync-strip{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin:-6px 0 16px 2px;}
   .sync-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex-shrink:0;transition:background .3s;}
 
   nav.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;margin-bottom:16px;}
-  nav.tabs button{flex:1;white-space:nowrap;background:var(--panel);color:var(--muted);border:1px solid var(--border);padding:10px 12px;border-radius:10px;font-size:13px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer;}
-  nav.tabs button.active{background:var(--panel2);color:var(--gold);border-color:#3a3320;}
+  nav.tabs button{flex:1;white-space:nowrap;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:var(--muted);border:1px solid var(--border);padding:10px 12px;border-radius:10px;font-size:13px;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer;transition:transform .12s ease, background .25s ease, color .25s ease;}
+  nav.tabs button:active{transform:scale(.96);}
+  nav.tabs button.active{background:linear-gradient(135deg, rgba(95,211,74,.22), rgba(47,168,232,.22));color:#fff;border-color:rgba(255,255,255,.18);}
 
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;}
+  .card{background:var(--panel);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:12px;box-shadow:0 8px 28px rgba(0,0,0,.35);}
   .stat-row{display:flex;gap:10px;margin-bottom:14px;}
-  .stat{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
+  .stat{flex:1;background:var(--panel);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--border);border-radius:12px;padding:10px 12px;}
   .stat .label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
   .stat .value{font-size:20px;font-weight:600;margin-top:2px;}
   .stat .value.gold{color:var(--gold);}
 
-  .session-card{border-radius:var(--radius);padding:0;overflow:hidden;border:1px solid var(--border);margin-bottom:12px;background:var(--panel);}
-  .session-top{height:5px;}
+  .session-card{position:relative;border-radius:var(--radius);padding:0;overflow:hidden;border:1px solid var(--border);margin-bottom:12px;background:var(--panel);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 8px 28px rgba(0,0,0,.4);}
+  .session-card.glow-pc{animation:glowPc 3.4s ease-in-out infinite;}
+  .session-card.glow-xsx{animation:glowXsx 3.4s ease-in-out infinite;}
+  .session-card.glow-xox{animation:glowXox 3.4s ease-in-out infinite;}
+  @keyframes glowPc{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(155,123,255,.3),0 0 18px rgba(155,123,255,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(155,123,255,.55),0 0 32px rgba(155,123,255,.32);}}
+  @keyframes glowXsx{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(95,211,74,.3),0 0 18px rgba(95,211,74,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(95,211,74,.55),0 0 32px rgba(95,211,74,.32);}}
+  @keyframes glowXox{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.3),0 0 18px rgba(47,168,232,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.55),0 0 32px rgba(47,168,232,.32);}}
+  .session-top{height:4px;}
   .session-body{padding:14px;}
   .session-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
-  .session-head .sys{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;}
+  .session-head .sys{font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:700;}
   .badge{display:inline-block;font-size:11px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:20px;margin-left:6px;}
   .live-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:6px;animation:pulse 1.4s ease-in-out infinite;}
   .session-metrics{display:flex;gap:10px;margin-bottom:10px;}
   .metric{flex:1;background:var(--panel2);border-radius:10px;padding:8px 10px;}
   .metric .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
   .metric .v{font-size:18px;font-weight:600;margin-top:2px;}
-  .metric .v.gold{color:var(--gold);}
+  .metric .v.gold{color:var(--gold);text-shadow:0 0 14px rgba(242,183,5,.45);}
   .free-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:10px;}
   .btn-row{display:flex;gap:8px;}
-  button.action{flex:1;border:none;border-radius:10px;padding:10px;font-weight:600;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;}
+  button.action{flex:1;border:none;border-radius:10px;padding:10px;font-weight:600;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;transition:transform .12s ease, box-shadow .2s ease;}
+  button.action:active:not(:disabled){transform:scale(.96);}
   button.action:disabled{opacity:.55;cursor:not-allowed;}
-  .btn-primary{background:var(--gold);color:#1a1400;}
-  .btn-ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border) !important;}
+  .btn-primary{background:var(--gold);color:#1a1400;box-shadow:0 4px 18px rgba(242,183,5,.35);}
+  .btn-ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border) !important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
   .btn-danger{background:transparent;color:var(--danger);border:1px solid #4a2222 !important;}
-  .btn-mini{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:'Inter',sans-serif;}
+  .btn-mini{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;font-family:'Inter',sans-serif;transition:transform .12s ease;}
+  .btn-mini:active:not(:disabled){transform:scale(.94);}
   .btn-mini:disabled{opacity:.55;cursor:not-allowed;}
 
   .empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:13px;}
   .err-text{font-size:11.5px;color:var(--danger);margin-top:8px;display:none;}
 
   .tiles{display:flex;gap:8px;margin-bottom:12px;}
-  .tile{flex:1;border-radius:12px;padding:12px 8px;text-align:center;border:1.5px solid var(--border);background:var(--panel2);cursor:pointer;}
-  .tile.selected{border-color:var(--gold);background:#20210f;}
+  .tile{flex:1;border-radius:12px;padding:12px 8px;text-align:center;border:1.5px solid var(--border);background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);cursor:pointer;transition:transform .12s ease, box-shadow .25s ease;}
+  .tile:active{transform:scale(.96);}
+  .tile.selected{background:rgba(255,255,255,.06);}
   .tile.disabled{opacity:.4;cursor:not-allowed;}
-  .tile .name{font-size:12px;font-weight:700;font-family:'Space Grotesk',sans-serif;}
+  .tile .name{font-size:13px;font-weight:700;font-family:'Rajdhani',sans-serif;letter-spacing:.3px;}
   .tile .sub{font-size:10px;color:var(--muted);margin-top:2px;}
   .tile .inuse{font-size:10px;color:var(--danger);margin-top:2px;}
 
   .stepper{display:flex;align-items:center;gap:10px;justify-content:center;background:var(--panel2);border-radius:10px;padding:8px;}
-  .stepper button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:18px;cursor:pointer;}
-  .stepper .n{font-size:18px;font-weight:700;min-width:70px;text-align:center;}
+  .stepper button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:18px;cursor:pointer;transition:transform .12s ease;}
+  .stepper button:active{transform:scale(.92);}
+  .stepper .n{font-size:19px;font-weight:700;min-width:70px;text-align:center;font-family:'Rajdhani',sans-serif;}
 
   label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:6px;margin-top:12px;}
   input[type=datetime-local],input[type=number],input[type=date],input[type=month],select{
@@ -83,11 +101,14 @@
     padding:10px;border-radius:10px;font-size:14px;font-family:'JetBrains Mono',monospace;
   }
   .pay-toggle{display:flex;gap:8px;}
-  .pay-toggle button{flex:1;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;}
+  .pay-toggle button{flex:1;padding:10px 6px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--muted);font-weight:600;font-size:13px;cursor:pointer;font-family:'Inter',sans-serif;transition:transform .12s ease, background .2s ease;}
+  .pay-toggle button:active{transform:scale(.96);}
   .pay-toggle button.selected{background:var(--gold);color:#1a1400;border-color:var(--gold);}
+  .split-row{display:flex;gap:10px;}
+  .split-row > div{flex:1;}
 
-  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
-  .sheet{background:var(--panel);width:100%;max-width:720px;border-radius:18px 18px 0 0;padding:18px 16px 26px;border:1px solid var(--border);border-bottom:none;max-height:88vh;overflow-y:auto;}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
+  .sheet{background:#12151dee;backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);width:100%;max-width:720px;border-radius:18px 18px 0 0;padding:18px 16px 26px;border:1px solid var(--border);border-bottom:none;max-height:88vh;overflow-y:auto;}
   .sheet h3{margin-bottom:12px;}
   .close-x{float:right;background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;}
 
@@ -109,12 +130,14 @@
   .legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;}
 
   .hint{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:4px;}
-  .section-title{font-size:14px;margin-bottom:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-family:'Inter',sans-serif;font-weight:700;}
-  .divider{height:1px;background:var(--border);margin:16px 0;}
+  .section-title{font-size:15px;margin-bottom:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-family:'Rajdhani',sans-serif;font-weight:700;}
+  .divider{height:1px;background:linear-gradient(90deg, transparent, var(--border), transparent);margin:16px 0;}
   a.export{color:var(--gold);text-decoration:none;font-size:12.5px;font-weight:600;}
 </style>
 </head>
 <body>
+<div class="bg-glow bg-glow-1"></div>
+<div class="bg-glow bg-glow-2"></div>
 <div id="app">
   <header>
     <div class="brand"><span class="dot"></span><h1>Vapi GameZone Sales Console</h1></div>
@@ -171,9 +194,9 @@ async function apiPost(action, payload){
 }
 
 const SYSTEMS = {
-  pc:  { name:'Gaming PC',       short:'PC',  color:'#9B8CFB', max:2, rates:{1:120,2:100} },
-  xsx: { name:'Xbox Series X',   short:'XSX', color:'#3ECF8E', max:4, rates:{1:110,2:100,3:80,4:70} },
-  xox: { name:'Xbox One X',      short:'XOX', color:'#FF7A59', max:4, rates:{1:90,2:80,3:70,4:60} },
+  pc:  { name:'Gaming PC',       short:'PC',  color:'#9B7BFF', max:2, rates:{1:120,2:100} },
+  xsx: { name:'Xbox Series X',   short:'XSX', color:'#5FD34A', max:4, rates:{1:110,2:100,3:80,4:70} },
+  xox: { name:'Xbox One X',      short:'XOX', color:'#2FA8E8', max:4, rates:{1:90,2:80,3:70,4:60} },
 };
 const SYS_KEYS = Object.keys(SYSTEMS);
 
@@ -188,6 +211,12 @@ let syncFailStreak = 0;
 
 function hourlyRate(sysKey, players){ return SYSTEMS[sysKey].rates[players] * players; }
 function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
+function paymentCell(h){
+  if(h.payment==='split'){
+    return 'Split<div class="hint" style="margin:0;">₹'+Math.round(h.cashAmount||0)+'c+₹'+Math.round(h.onlineAmount||0)+'o</div>';
+  }
+  return h.payment==='cash' ? 'Cash' : 'Online';
+}
 function pad(n){ return n.toString().padStart(2,'0'); }
 function fmtTime(ts){ const d=new Date(ts); return pad(d.getHours()%12===0?12:d.getHours()%12)+':'+pad(d.getMinutes())+' '+(d.getHours()<12?'AM':'PM'); }
 function fmtDateShort(ts){ const d=new Date(ts); return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}); }
@@ -309,7 +338,7 @@ function renderActiveTab(){
     activeSessions.slice().sort((a,b)=>b.start-a.start).forEach(s=>{
       const sys = SYSTEMS[s.sys];
       const rate = hourlyRate(s.sys, s.players);
-      html += '<div class="session-card">';
+      html += '<div class="session-card glow-'+s.sys+'">';
       html += '<div class="session-top" style="background:'+sys.color+'"></div>';
       html += '<div class="session-body" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+rate+'">';
       html += '<div class="session-head"><div class="sys" style="color:'+sys.color+'">'+sys.name+'<span class="badge">'+s.players+' player'+(s.players>1?'s':'')+'</span></div><div class="hint mono">from '+fmtTime(s.start)+'</div></div>';
@@ -333,7 +362,7 @@ function renderActiveTab(){
   SYS_KEYS.forEach(k=>{
     const sys = SYSTEMS[k];
     const busy = activeSessions.some(s=>s.sys===k);
-    html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?'border-color:'+sys.color:'')+'">';
+    html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?('border-color:'+sys.color+';box-shadow:0 0 0 1px '+sys.color+',0 0 18px '+sys.color+'55'):'')+'">';
     html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
     html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">from '+money(sys.rates[1])+'/hr</div>';
     html += '</div>';
@@ -418,6 +447,7 @@ function openCheckoutModal(id){
   const billableMin = Math.max(0, elapsedMin - (s.freeMin||0));
   const suggestedHours = Math.max(0.25, Math.ceil(billableMin/15)*15/60);
   let payment = 'cash';
+  const startingTotal = Math.round(suggestedHours*rate);
 
   const root = document.getElementById('modal-root');
   root.innerHTML = `
@@ -432,10 +462,18 @@ function openCheckoutModal(id){
         <div class="pay-toggle">
           <button data-pay="cash" class="selected">Cash</button>
           <button data-pay="online">Online</button>
+          <button data-pay="split">Split</button>
+        </div>
+        <div id="splitRow" style="display:none;">
+          <div class="split-row">
+            <div><label>Cash</label><input type="number" id="cashAmountInput" min="0" step="1" value="${startingTotal}"></div>
+            <div><label>Online</label><input type="number" id="onlineAmountInput" min="0" step="1" value="0"></div>
+          </div>
+          <div class="hint">Edit either amount — the other adjusts to keep the total right.</div>
         </div>
         <div class="stat" style="margin-top:14px;">
           <div class="label">Total bill</div>
-          <div class="value gold mono" id="totalPreview">${money(suggestedHours*rate)}</div>
+          <div class="value gold mono" id="totalPreview">${money(startingTotal)}</div>
         </div>
         <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
         <div class="err-text" id="checkoutErr"></div>
@@ -444,17 +482,49 @@ function openCheckoutModal(id){
 
   const hoursInput = document.getElementById('hoursInput');
   const totalPreview = document.getElementById('totalPreview');
-  function recompute(){ totalPreview.textContent = money(parseFloat(hoursInput.value||0)*rate); }
+  const splitRow = document.getElementById('splitRow');
+  const cashAmountInput = document.getElementById('cashAmountInput');
+  const onlineAmountInput = document.getElementById('onlineAmountInput');
+
+  function currentTotal(){ return Math.round(parseFloat(hoursInput.value||0)*rate); }
+  function resetSplitDefaults(){
+    const t = currentTotal();
+    cashAmountInput.value = t;
+    onlineAmountInput.value = 0;
+  }
+  function recompute(){
+    totalPreview.textContent = money(currentTotal());
+    if(payment==='split') resetSplitDefaults();
+  }
   hoursInput.addEventListener('input', recompute);
+
   document.querySelectorAll('[data-pay]').forEach(b=>b.addEventListener('click', ()=>{
     payment = b.getAttribute('data-pay');
     document.querySelectorAll('[data-pay]').forEach(x=>x.classList.toggle('selected', x===b));
+    splitRow.style.display = payment==='split' ? 'block' : 'none';
+    if(payment==='split') resetSplitDefaults();
   }));
+  cashAmountInput.addEventListener('input', ()=>{
+    const t = currentTotal();
+    const cash = Math.max(0, Math.min(t, parseFloat(cashAmountInput.value||0)));
+    onlineAmountInput.value = Math.round(t-cash);
+  });
+  onlineAmountInput.addEventListener('input', ()=>{
+    const t = currentTotal();
+    const online = Math.max(0, Math.min(t, parseFloat(onlineAmountInput.value||0)));
+    cashAmountInput.value = Math.round(t-online);
+  });
+
   document.getElementById('confirmCheckout').addEventListener('click', async function(){
     const hours = Math.max(0.25, parseFloat(hoursInput.value||suggestedHours));
+    const total = Math.round(hours*rate);
+    let cashAmount, onlineAmount;
+    if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
+    else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
+    else { cashAmount = Math.round(parseFloat(cashAmountInput.value||0)); onlineAmount = Math.round(parseFloat(onlineAmountInput.value||0)); }
     const restore = setButtonBusy(this, 'Saving…');
     try{
-      const data = await apiPost('checkoutSession', { id, hours, payment, hourly: rate });
+      const data = await apiPost('checkoutSession', { id, hours, payment, hourly: rate, cashAmount, onlineAmount });
       activeSessions = data.activeSessions; history = data.history;
       syncOk(); closeModal(); renderCurrentTab();
     }catch(e){
@@ -505,8 +575,8 @@ function renderDailyTab(){
   let html = '<label>Date</label><input type="date" id="dailyDate" value="'+dailySelectedDate+'">';
   const entries = history.filter(h=>h.date===dailySelectedDate).sort((a,b)=>a.start-b.start);
   const total = entries.reduce((s,h)=>s+h.total,0);
-  const cash = entries.filter(h=>h.payment==='cash').reduce((s,h)=>s+h.total,0);
-  const online = entries.filter(h=>h.payment==='online').reduce((s,h)=>s+h.total,0);
+  const cash = entries.reduce((s,h)=>s+(Number(h.cashAmount)||0),0);
+  const online = entries.reduce((s,h)=>s+(Number(h.onlineAmount)||0),0);
 
   html += '<div class="stat-row" style="margin-top:12px;">';
   html += '<div class="stat"><div class="label">Total</div><div class="value gold mono">'+money(total)+'</div></div>';
@@ -527,7 +597,7 @@ function renderDailyTab(){
     html += '<table><tr><th>System</th><th>Pl.</th><th>Time</th><th>Hrs</th><th>Total</th><th>Pay</th></tr>';
     entries.forEach(h=>{
       const sys = SYSTEMS[h.sys];
-      html += '<tr><td style="color:'+sys.color+'">'+sys.short+'</td><td class="mono">'+h.players+'</td><td class="mono">'+fmtTime(h.start)+'</td><td class="mono">'+h.hours+'</td><td class="mono">'+money(h.total)+'</td><td>'+(h.payment==='cash'?'Cash':'Online')+'</td></tr>';
+      html += '<tr><td style="color:'+sys.color+'">'+sys.short+'</td><td class="mono">'+h.players+'</td><td class="mono">'+fmtTime(h.start)+'</td><td class="mono">'+h.hours+'</td><td class="mono">'+money(h.total)+'</td><td>'+paymentCell(h)+'</td></tr>';
     });
     html += '</table>';
   }
@@ -556,8 +626,8 @@ function renderMonthlyTab(){
   let html = '<label>Month</label><input type="month" id="monthlyMonth" value="'+monthlySelected+'">';
   const entries = history.filter(h=>monthKey(h.date)===monthlySelected);
   const total = entries.reduce((s,h)=>s+h.total,0);
-  const cash = entries.filter(h=>h.payment==='cash').reduce((s,h)=>s+h.total,0);
-  const online = entries.filter(h=>h.payment==='online').reduce((s,h)=>s+h.total,0);
+  const cash = entries.reduce((s,h)=>s+(Number(h.cashAmount)||0),0);
+  const online = entries.reduce((s,h)=>s+(Number(h.onlineAmount)||0),0);
   const [y,m] = monthlySelected.split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
   const perDay = {};
@@ -608,7 +678,7 @@ function renderHistoryTab(){
   html += '<div><label>To</label><input type="date" id="fTo" value="'+histFilters.to+'"></div>';
   html += '</div><div class="filters">';
   html += '<div><label>System</label><select id="fSys"><option value="all">All</option>'+SYS_KEYS.map(k=>'<option value="'+k+'" '+(histFilters.sys===k?'selected':'')+'>'+SYSTEMS[k].name+'</option>').join('')+'</select></div>';
-  html += '<div><label>Payment</label><select id="fPay"><option value="all">All</option><option value="cash" '+(histFilters.pay==='cash'?'selected':'')+'>Cash</option><option value="online" '+(histFilters.pay==='online'?'selected':'')+'>Online</option></select></div>';
+  html += '<div><label>Payment</label><select id="fPay"><option value="all">All</option><option value="cash" '+(histFilters.pay==='cash'?'selected':'')+'>Cash</option><option value="online" '+(histFilters.pay==='online'?'selected':'')+'>Online</option><option value="split" '+(histFilters.pay==='split'?'selected':'')+'>Split</option></select></div>';
   html += '</div>';
   html += '<div class="hint">'+entries.length+' sessions · total <b class="mono" style="color:var(--gold)">'+money(total)+'</b></div>';
   html += '<div style="margin-top:8px;"><a href="#" class="export" id="exportCsv">Export CSV ↓</a></div>';
@@ -631,7 +701,7 @@ function renderHistoryTab(){
     html += '<table><tr><th>Date</th><th>Sys</th><th>Pl.</th><th>Start</th><th>Hrs</th><th>Total</th><th>Pay</th><th></th></tr>';
     entries.forEach(h=>{
       const sys = SYSTEMS[h.sys];
-      html += '<tr><td class="mono">'+fmtDateShort(h.start)+'</td><td style="color:'+sys.color+'">'+sys.short+'</td><td class="mono">'+h.players+'</td><td class="mono">'+fmtTime(h.start)+'</td><td class="mono">'+h.hours+'</td><td class="mono">'+money(h.total)+'</td><td>'+(h.payment==='cash'?'Cash':'Online')+'</td>';
+      html += '<tr><td class="mono">'+fmtDateShort(h.start)+'</td><td style="color:'+sys.color+'">'+sys.short+'</td><td class="mono">'+h.players+'</td><td class="mono">'+fmtTime(h.start)+'</td><td class="mono">'+h.hours+'</td><td class="mono">'+money(h.total)+'</td><td>'+paymentCell(h)+'</td>';
       html += '<td class="row-actions"><button class="btn-mini" data-edit-hist="'+h.id+'">Edit</button><button class="btn-mini" data-del-hist="'+h.id+'" style="color:var(--danger)">Del</button></td></tr>';
     });
     html += '</table>';
@@ -654,6 +724,8 @@ function openEditHistModal(id){
   const h = history.find(x=>x.id===id);
   if(!h) return;
   const sys = SYSTEMS[h.sys];
+  const existingCash = (h.cashAmount!==undefined && h.cashAmount!=='') ? Number(h.cashAmount) : (h.payment==='online' ? 0 : h.total);
+  const existingOnline = (h.onlineAmount!==undefined && h.onlineAmount!=='') ? Number(h.onlineAmount) : (h.payment==='online' ? h.total : 0);
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="overlay" id="ovEdit">
@@ -669,6 +741,14 @@ function openEditHistModal(id){
         <div class="pay-toggle">
           <button data-epay="cash" class="${h.payment==='cash'?'selected':''}">Cash</button>
           <button data-epay="online" class="${h.payment==='online'?'selected':''}">Online</button>
+          <button data-epay="split" class="${h.payment==='split'?'selected':''}">Split</button>
+        </div>
+        <div id="editSplitRow" style="display:${h.payment==='split'?'block':'none'};">
+          <div class="split-row">
+            <div><label>Cash</label><input type="number" id="ecCash" min="0" step="1" value="${existingCash}"></div>
+            <div><label>Online</label><input type="number" id="ecOnline" min="0" step="1" value="${existingOnline}"></div>
+          </div>
+          <div class="hint">Edit either amount — the other adjusts to keep the total right.</div>
         </div>
         <div class="stat" style="margin-top:14px;"><div class="label">Total bill</div><div class="value gold mono" id="ePreview">${money(h.total)}</div></div>
         <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="saveEdit">Save changes</button></div>
@@ -676,10 +756,20 @@ function openEditHistModal(id){
       </div>
     </div>`;
   let players = h.players, payment = h.payment;
-  function recompute(){
+  const editSplitRow = document.getElementById('editSplitRow');
+  const ecCash = document.getElementById('ecCash');
+  const ecOnline = document.getElementById('ecOnline');
+  function currentEditTotal(){
     const rate = hourlyRate(h.sys, players);
     const hours = parseFloat(document.getElementById('ehHours').value||h.hours);
-    document.getElementById('ePreview').textContent = money(rate*hours);
+    return Math.round(rate*hours);
+  }
+  function resetEditSplitDefaults(){
+    const t = currentEditTotal();
+    ecCash.value = t; ecOnline.value = 0;
+  }
+  function recompute(){
+    document.getElementById('ePreview').textContent = money(currentEditTotal());
   }
   document.getElementById('epDec').addEventListener('click', ()=>{ if(players>1){ players--; document.getElementById('epVal').textContent=players; recompute(); }});
   document.getElementById('epInc').addEventListener('click', ()=>{ if(players<sys.max){ players++; document.getElementById('epVal').textContent=players; recompute(); }});
@@ -687,13 +777,30 @@ function openEditHistModal(id){
   document.querySelectorAll('[data-epay]').forEach(b=>b.addEventListener('click', ()=>{
     payment=b.getAttribute('data-epay');
     document.querySelectorAll('[data-epay]').forEach(x=>x.classList.toggle('selected', x===b));
+    editSplitRow.style.display = payment==='split' ? 'block' : 'none';
+    if(payment==='split' && (ecCash.value==='' || ecCash.value==null)) resetEditSplitDefaults();
   }));
+  ecCash.addEventListener('input', ()=>{
+    const t = currentEditTotal();
+    const cash = Math.max(0, Math.min(t, parseFloat(ecCash.value||0)));
+    ecOnline.value = Math.round(t-cash);
+  });
+  ecOnline.addEventListener('input', ()=>{
+    const t = currentEditTotal();
+    const online = Math.max(0, Math.min(t, parseFloat(ecOnline.value||0)));
+    ecCash.value = Math.round(t-online);
+  });
   document.getElementById('saveEdit').addEventListener('click', async function(){
     const hours = Math.max(0.25, parseFloat(document.getElementById('ehHours').value||h.hours));
     const hourly = hourlyRate(h.sys, players);
+    const total = Math.round(hours*hourly);
+    let cashAmount, onlineAmount;
+    if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
+    else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
+    else { cashAmount = Math.round(parseFloat(ecCash.value||0)); onlineAmount = Math.round(parseFloat(ecOnline.value||0)); }
     const restore = setButtonBusy(this, 'Saving…');
     try{
-      const data = await apiPost('editHistory', { id, players, hours, payment, hourly });
+      const data = await apiPost('editHistory', { id, players, hours, payment, hourly, cashAmount, onlineAmount });
       activeSessions = data.activeSessions; history = data.history;
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
@@ -797,9 +904,9 @@ function openRestoreConfirm(data){
 }
 
 function exportCsv(entries){
-  const rows = [['Date','System','Players','Start','Hours','Rate/hr','Total','Payment']];
+  const rows = [['Date','System','Players','Start','Hours','Rate/hr','Total','Payment','Cash Amount','Online Amount']];
   entries.forEach(h=>{
-    rows.push([h.date, SYSTEMS[h.sys].name, h.players, fmtTime(h.start), h.hours, h.hourly, h.total, h.payment]);
+    rows.push([h.date, SYSTEMS[h.sys].name, h.players, fmtTime(h.start), h.hours, h.hourly, h.total, h.payment, Math.round(h.cashAmount||0), Math.round(h.onlineAmount||0)]);
   });
   const csv = rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
