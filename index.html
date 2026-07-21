@@ -90,6 +90,15 @@
   .tile .sub{font-size:10px;color:var(--muted);margin-top:2px;}
   .tile .inuse{font-size:10px;color:var(--danger);margin-top:2px;}
 
+  .product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;}
+  .product-tile{border-radius:12px;padding:10px 8px;text-align:center;border:1.5px solid var(--border);background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);cursor:pointer;transition:transform .12s ease;}
+  .product-tile:active{transform:scale(.96);}
+  .product-tile.outofstock{opacity:.4;cursor:not-allowed;}
+  .product-tile .pname{font-size:12.5px;font-weight:700;font-family:'Rajdhani',sans-serif;}
+  .product-tile .pprice{font-size:13px;color:var(--gold);margin-top:2px;}
+  .product-tile .pstock{font-size:10px;color:var(--muted);margin-top:2px;}
+  .product-tile .pstock.low{color:var(--danger);}
+
   .stepper{display:flex;align-items:center;gap:10px;justify-content:center;background:var(--panel2);border-radius:10px;padding:8px;}
   .stepper button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:18px;cursor:pointer;transition:transform .12s ease;}
   .stepper button:active{transform:scale(.92);}
@@ -147,6 +156,8 @@
 
   <nav class="tabs" id="tabs">
     <button data-tab="active" class="active">Live</button>
+    <button data-tab="shop">Shop</button>
+    <button data-tab="expenses">Expenses</button>
     <button data-tab="daily">Today</button>
     <button data-tab="monthly">Month</button>
     <button data-tab="history">History</button>
@@ -154,6 +165,8 @@
 
   <main>
     <section id="tab-active"></section>
+    <section id="tab-shop" hidden></section>
+    <section id="tab-expenses" hidden></section>
     <section id="tab-daily" hidden></section>
     <section id="tab-monthly" hidden></section>
     <section id="tab-history" hidden></section>
@@ -199,9 +212,15 @@ const SYSTEMS = {
   xox: { name:'Xbox One X',      short:'XOX', color:'#2FA8E8', max:4, rates:{1:90,2:80,3:70,4:60} },
 };
 const SYS_KEYS = Object.keys(SYSTEMS);
+const PRODUCT_CATEGORIES = { snack:'Snack', drink:'Drink', other:'Other' };
+const EXPENSE_CATEGORIES = ['Electricity', 'Rent', 'Salary', 'Maintenance', 'Other'];
+const LOW_STOCK_THRESHOLD = 5;
 
 let activeSessions = [];
 let history = [];
+let products = [];
+let sales = [];
+let expenses = [];
 let currentTab = 'active';
 let newSessionSys = null;
 let newSessionPlayers = 1;
@@ -245,19 +264,28 @@ function showInlineError(id, msg){
 // ---------- Sync bookkeeping ----------
 function syncOk(){ lastSyncTime = Date.now(); syncFailStreak = 0; updateSyncStatus(); }
 function syncFail(e){ syncFailStreak++; console.error(e); updateSyncStatus(); }
+function applyState(data){
+  activeSessions = data.activeSessions; history = data.history;
+  products = data.products||[]; sales = data.sales||[]; expenses = data.expenses||[];
+}
 
 async function initialLoad(){
   try{
     const data = await apiGet('getAll');
-    activeSessions = data.activeSessions; history = data.history;
+    applyState(data);
     syncOk();
   }catch(e){ syncFail(e); }
 }
 async function pollState(){
   try{
     const data = await apiGet('getAll');
-    if(JSON.stringify(data.activeSessions)!==JSON.stringify(activeSessions) || JSON.stringify(data.history)!==JSON.stringify(history)){
-      activeSessions = data.activeSessions; history = data.history;
+    const changed = JSON.stringify(data.activeSessions)!==JSON.stringify(activeSessions) ||
+      JSON.stringify(data.history)!==JSON.stringify(history) ||
+      JSON.stringify(data.products)!==JSON.stringify(products) ||
+      JSON.stringify(data.sales)!==JSON.stringify(sales) ||
+      JSON.stringify(data.expenses)!==JSON.stringify(expenses);
+    if(changed){
+      applyState(data);
       renderCurrentTab();
     }
     syncOk();
@@ -308,13 +336,15 @@ document.getElementById('tabs').addEventListener('click', e=>{
   if(!btn) return;
   currentTab = btn.getAttribute('data-tab');
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active', b===btn));
-  ['active','daily','monthly','history'].forEach(t=>{
+  ['active','shop','expenses','daily','monthly','history'].forEach(t=>{
     document.getElementById('tab-'+t).hidden = (t!==currentTab);
   });
   renderCurrentTab();
 });
 function renderCurrentTab(){
   if(currentTab==='active') renderActiveTab();
+  else if(currentTab==='shop') renderShopTab();
+  else if(currentTab==='expenses') renderExpensesTab();
   else if(currentTab==='daily') renderDailyTab();
   else if(currentTab==='monthly') renderMonthlyTab();
   else renderHistoryTab();
@@ -409,7 +439,7 @@ function attachActiveHandlers(){
     const restore = setButtonBusy(b, '…');
     try{
       const data = await apiPost('addFreeTime', {id, minutes:15});
-      activeSessions = data.activeSessions; history = data.history;
+      applyState(data);
       syncOk(); renderActiveTab();
     }catch(e){ syncFail(e); restore(); }
   }));
@@ -427,7 +457,7 @@ async function startSession(){
   const start = newSessionCustomStart || Date.now();
   try{
     const data = await apiPost('startSession', { id: uid(), sys: newSessionSys, players: newSessionPlayers, start, freeMin: 0 });
-    activeSessions = data.activeSessions; history = data.history;
+    applyState(data);
     syncOk();
     newSessionSys = null; newSessionPlayers = 1; newSessionCustomStart = null;
     renderActiveTab();
@@ -525,7 +555,7 @@ function openCheckoutModal(id){
     const restore = setButtonBusy(this, 'Saving…');
     try{
       const data = await apiPost('checkoutSession', { id, hours, payment, hourly: rate, cashAmount, onlineAmount });
-      activeSessions = data.activeSessions; history = data.history;
+      applyState(data);
       syncOk(); closeModal(); renderCurrentTab();
     }catch(e){
       syncFail(e); restore();
@@ -555,7 +585,7 @@ function openCancelConfirm(id){
     const restore = setButtonBusy(this, 'Cancelling…');
     try{
       const data = await apiPost('cancelSession', {id});
-      activeSessions = data.activeSessions; history = data.history;
+      applyState(data);
       syncOk(); closeModal(); renderCurrentTab();
     }catch(e){
       syncFail(e); restore();
@@ -568,24 +598,505 @@ function openCancelConfirm(id){
 
 function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
 
+// ---------- SHOP TAB ----------
+let showAddProduct = false;
+
+function productsSorted(){
+  const order = {snack:0, drink:1, other:2};
+  return products.slice().sort((a,b)=> (order[a.category]??3)-(order[b.category]??3) || a.name.localeCompare(b.name));
+}
+function topSellerFrom(saleList){
+  const qtyByProduct = {};
+  saleList.forEach(s=>{ qtyByProduct[s.productName] = (qtyByProduct[s.productName]||0) + Number(s.qty); });
+  let best=null;
+  Object.entries(qtyByProduct).forEach(([name,qty])=>{ if(!best || qty>best.qty) best={name,qty}; });
+  return best;
+}
+
+function renderShopTab(){
+  const el = document.getElementById('tab-shop');
+  const todaySales = sales.filter(s=>s.date===todayKey());
+  const todayRevenue = todaySales.reduce((s,x)=>s+Number(x.revenue),0);
+  const todayProfit = todaySales.reduce((s,x)=>s+Number(x.profit),0);
+  const lowStock = products.filter(p=>p.stock<=LOW_STOCK_THRESHOLD);
+  const topSellerToday = topSellerFrom(todaySales);
+
+  let html = '';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Shop today</div><div class="value gold mono">'+money(todayRevenue)+'</div></div>';
+  html += '<div class="stat"><div class="label">Profit today</div><div class="value mono">'+money(todayProfit)+'</div></div>';
+  html += '<div class="stat"><div class="label">Low stock</div><div class="value mono" style="'+(lowStock.length?'color:var(--danger)':'')+'">'+lowStock.length+'</div></div>';
+  html += '</div>';
+  if(topSellerToday){
+    html += '<div class="hint" style="margin:-6px 0 12px 2px;">Top seller today: <b>'+topSellerToday.name+'</b> ('+topSellerToday.qty+' sold)</div>';
+  }
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Sell</div>';
+  if(products.length===0){
+    html += '<div class="empty">No products yet — add a snack or drink below to start selling.</div>';
+  } else {
+    html += '<div class="product-grid">';
+    productsSorted().forEach(p=>{
+      const out = p.stock<=0;
+      html += '<div class="product-tile'+(out?' outofstock':'')+'" '+(out?'':'data-sell-product="'+p.id+'"')+'>';
+      html += '<div class="pname">'+p.name+'</div>';
+      html += '<div class="pprice mono">'+money(p.sellPrice)+'</div>';
+      html += '<div class="pstock'+(p.stock<=LOW_STOCK_THRESHOLD?' low':'')+'">'+(out?'Out of stock':p.stock+' left')+'</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Stock & pricing</div>';
+  if(products.length===0){
+    html += '<div class="empty">Nothing added yet.</div>';
+  } else {
+    html += '<table><tr><th>Name</th><th>Cat</th><th>Cost</th><th>Sell</th><th>Stock</th><th></th></tr>';
+    productsSorted().forEach(p=>{
+      html += '<tr><td>'+p.name+'</td><td class="hint" style="margin:0;">'+(PRODUCT_CATEGORIES[p.category]||p.category)+'</td><td class="mono">'+money(p.costPrice)+'</td><td class="mono">'+money(p.sellPrice)+'</td><td class="mono" style="'+(p.stock<=LOW_STOCK_THRESHOLD?'color:var(--danger)':'')+'">'+p.stock+'</td>';
+      html += '<td class="row-actions"><button class="btn-mini" data-restock="'+p.id+'">+Stock</button><button class="btn-mini" data-edit-product="'+p.id+'">Edit</button><button class="btn-mini" data-del-product="'+p.id+'" style="color:var(--danger)">Del</button></td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '<div style="margin-top:12px;"><button class="action btn-ghost" id="toggleAddProduct" style="width:100%">'+(showAddProduct?'Cancel':'+ Add product')+'</button></div>';
+  if(showAddProduct){
+    html += '<label>Name</label><input type="text" id="npName" placeholder="e.g. Lays Chips">';
+    html += '<label>Category</label><select id="npCategory"><option value="snack">Snack</option><option value="drink">Drink</option><option value="other">Other</option></select>';
+    html += '<div class="split-row"><div><label>Cost price</label><input type="number" id="npCost" min="0" step="1" value="0"></div><div><label>Sell price</label><input type="number" id="npSell" min="0" step="1" value="0"></div></div>';
+    html += '<label>Starting stock</label><input type="number" id="npStock" min="0" step="1" value="0">';
+    html += '<div style="margin-top:14px;"><button class="action btn-primary" id="saveNewProduct" style="width:100%">Save product</button></div>';
+    html += '<div class="err-text" id="addProductErr"></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Recent sales</div>';
+  const recentSales = sales.slice().sort((a,b)=>b.timestamp-a.timestamp).slice(0,10);
+  if(recentSales.length===0){
+    html += '<div class="empty">No sales yet.</div>';
+  } else {
+    html += '<table><tr><th>Time</th><th>Item</th><th>Qty</th><th>Total</th><th>Pay</th><th></th></tr>';
+    recentSales.forEach(s=>{
+      html += '<tr><td class="mono">'+fmtTime(s.timestamp)+'</td><td>'+s.productName+'</td><td class="mono">'+s.qty+'</td><td class="mono">'+money(s.revenue)+'</td><td>'+(s.payment==='cash'?'Cash':'Online')+'</td><td><button class="btn-mini" data-del-sale="'+s.id+'" style="color:var(--danger)">Del</button></td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '<div class="hint">Showing the 10 most recent — see Today/Month for full period totals.</div>';
+  html += '<div style="margin-top:8px;"><a href="#" class="export" id="exportSales">Export all sales as CSV ↓</a></div>';
+  html += '</div>';
+
+  el.innerHTML = html;
+  attachShopHandlers();
+}
+
+function attachShopHandlers(){
+  document.querySelectorAll('[data-sell-product]').forEach(t=>t.addEventListener('click', ()=>{
+    openSellModal(t.getAttribute('data-sell-product'));
+  }));
+  document.querySelectorAll('[data-restock]').forEach(b=>b.addEventListener('click', ()=>{
+    openRestockModal(b.getAttribute('data-restock'));
+  }));
+  document.querySelectorAll('[data-edit-product]').forEach(b=>b.addEventListener('click', ()=>{
+    openEditProductModal(b.getAttribute('data-edit-product'));
+  }));
+  document.querySelectorAll('[data-del-product]').forEach(b=>b.addEventListener('click', ()=>{
+    openDeleteProductConfirm(b.getAttribute('data-del-product'));
+  }));
+  document.querySelectorAll('[data-del-sale]').forEach(b=>b.addEventListener('click', ()=>{
+    openDeleteSaleConfirm(b.getAttribute('data-del-sale'));
+  }));
+  const toggleBtn = document.getElementById('toggleAddProduct');
+  if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ showAddProduct = !showAddProduct; renderShopTab(); });
+  const exportSalesLink = document.getElementById('exportSales');
+  if(exportSalesLink) exportSalesLink.addEventListener('click', e=>{ e.preventDefault(); exportSalesCsv(); });
+  const saveBtn = document.getElementById('saveNewProduct');
+  if(saveBtn) saveBtn.addEventListener('click', async function(){
+    const name = document.getElementById('npName').value.trim();
+    const category = document.getElementById('npCategory').value;
+    const costPrice = parseFloat(document.getElementById('npCost').value||0);
+    const sellPrice = parseFloat(document.getElementById('npSell').value||0);
+    const stock = parseFloat(document.getElementById('npStock').value||0);
+    if(!name){ showInlineError('addProductErr','Give the product a name.'); return; }
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('addProduct', { id: uid(), name, category, costPrice, sellPrice, stock });
+      applyState(data);
+      syncOk(); showAddProduct = false; renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('addProductErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+}
+
+function openSellModal(productId){
+  const p = products.find(x=>x.id===productId);
+  if(!p) return;
+  let payment = 'cash';
+  let qty = 1;
+  const root = document.getElementById('modal-root');
+  function render(){
+    const total = Math.round(qty*p.sellPrice);
+    root.innerHTML = `
+      <div class="overlay" id="ovSell">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3>${p.name}</h3>
+          <div class="hint">${money(p.sellPrice)} each · ${p.stock} in stock</div>
+          <label>Quantity</label>
+          <div class="stepper"><button id="sqDec">−</button><div class="n mono" id="sqVal">${qty}</div><button id="sqInc">+</button></div>
+          <label>Mode of payment</label>
+          <div class="pay-toggle">
+            <button data-spay="cash" class="${payment==='cash'?'selected':''}">Cash</button>
+            <button data-spay="online" class="${payment==='online'?'selected':''}">Online</button>
+          </div>
+          <div class="stat" style="margin-top:14px;"><div class="label">Total</div><div class="value gold mono">${money(total)}</div></div>
+          <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmSell">Confirm sale</button></div>
+          <div class="err-text" id="sellErr"></div>
+        </div>
+      </div>`;
+    document.getElementById('sqDec').addEventListener('click', ()=>{ if(qty>1){ qty--; render(); }});
+    document.getElementById('sqInc').addEventListener('click', ()=>{ qty++; render(); });
+    document.querySelectorAll('[data-spay]').forEach(b=>b.addEventListener('click', ()=>{ payment=b.getAttribute('data-spay'); render(); }));
+    document.getElementById('confirmSell').addEventListener('click', async function(){
+      const restore = setButtonBusy(this, 'Saving…');
+      try{
+        const data = await apiPost('sellSnack', { id: uid(), productId, qty, payment });
+        applyState(data);
+        syncOk(); closeModal(); renderCurrentTab();
+      }catch(e){
+        syncFail(e); restore();
+        showInlineError('sellErr', "Couldn't save this — check your connection and try again.");
+      }
+    });
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovSell').addEventListener('click', e=>{ if(e.target.id==='ovSell') closeModal(); });
+  }
+  render();
+}
+
+function openRestockModal(id){
+  const p = products.find(x=>x.id===id);
+  if(!p) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovRestock">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Restock · ${p.name}</h3>
+        <div class="hint">Currently ${p.stock} in stock · cost price ${money(p.costPrice)}</div>
+        <label>Add quantity</label>
+        <input type="number" id="addQtyInput" min="1" step="1" value="1">
+        <label>New cost price (optional — leave blank to keep ${money(p.costPrice)})</label>
+        <input type="number" id="newCostInput" min="0" step="1" placeholder="${p.costPrice}">
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmRestock">Add to stock</button></div>
+        <div class="err-text" id="restockErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmRestock').addEventListener('click', async function(){
+    const addQty = parseFloat(document.getElementById('addQtyInput').value||0);
+    const newCostRaw = document.getElementById('newCostInput').value;
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const payload = { id, addQty };
+      if(newCostRaw!==''){ payload.newCostPrice = parseFloat(newCostRaw); }
+      const data = await apiPost('restockProduct', payload);
+      applyState(data);
+      syncOk(); closeModal(); renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('restockErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovRestock').addEventListener('click', e=>{ if(e.target.id==='ovRestock') closeModal(); });
+}
+
+function openEditProductModal(id){
+  const p = products.find(x=>x.id===id);
+  if(!p) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovEditProduct">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Edit · ${p.name}</h3>
+        <label>Name</label><input type="text" id="epName" value="${p.name}">
+        <label>Category</label>
+        <select id="epCategory">
+          <option value="snack" ${p.category==='snack'?'selected':''}>Snack</option>
+          <option value="drink" ${p.category==='drink'?'selected':''}>Drink</option>
+          <option value="other" ${p.category==='other'?'selected':''}>Other</option>
+        </select>
+        <div class="split-row"><div><label>Cost price</label><input type="number" id="epCost" min="0" step="1" value="${p.costPrice}"></div><div><label>Sell price</label><input type="number" id="epSell" min="0" step="1" value="${p.sellPrice}"></div></div>
+        <label>Stock (direct correction)</label>
+        <input type="number" id="epStock" min="0" step="1" value="${p.stock}">
+        <div class="hint">Use this only to correct a miscount — for a normal delivery, use Restock instead so it isn't lost from the record.</div>
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="saveProductEdit">Save changes</button></div>
+        <div class="err-text" id="editProductErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('saveProductEdit').addEventListener('click', async function(){
+    const name = document.getElementById('epName').value.trim();
+    const category = document.getElementById('epCategory').value;
+    const costPrice = parseFloat(document.getElementById('epCost').value||0);
+    const sellPrice = parseFloat(document.getElementById('epSell').value||0);
+    const stock = parseFloat(document.getElementById('epStock').value||0);
+    if(!name){ showInlineError('editProductErr','Give the product a name.'); return; }
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('editProduct', { id, name, category, costPrice, sellPrice, stock });
+      applyState(data);
+      syncOk(); closeModal(); renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('editProductErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovEditProduct').addEventListener('click', e=>{ if(e.target.id==='ovEditProduct') closeModal(); });
+}
+
+function openDeleteProductConfirm(id){
+  const p = products.find(x=>x.id===id);
+  if(!p) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovDelProduct">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Delete ${p.name}?</h3>
+        <div class="hint">This removes it from the sell list. Past sales of this item stay in your reports — this can't be undone.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep it</button>
+          <button class="action btn-danger" id="confirmDelProduct">Delete</button>
+        </div>
+        <div class="err-text" id="delProductErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmDelProduct').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Deleting…');
+    try{
+      const data = await apiPost('deleteProduct', {id});
+      applyState(data);
+      syncOk(); closeModal(); renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('delProductErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovDelProduct').addEventListener('click', e=>{ if(e.target.id==='ovDelProduct') closeModal(); });
+}
+
+function openDeleteSaleConfirm(id){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovDelSale">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Delete this sale?</h3>
+        <div class="hint">This removes it from reports and adds the quantity back to stock. This can't be undone.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep it</button>
+          <button class="action btn-danger" id="confirmDelSale">Delete</button>
+        </div>
+        <div class="err-text" id="delSaleErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmDelSale').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Deleting…');
+    try{
+      const data = await apiPost('deleteSale', {id});
+      applyState(data);
+      syncOk(); closeModal(); renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('delSaleErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovDelSale').addEventListener('click', e=>{ if(e.target.id==='ovDelSale') closeModal(); });
+}
+
+// ---------- EXPENSES TAB ----------
+let showAddExpense = false;
+let expenseCustomCategory = false;
+
+function renderExpensesTab(){
+  const el = document.getElementById('tab-expenses');
+  const todayExp = expenses.filter(x=>x.date===todayKey());
+  const monthExp = expenses.filter(x=>monthKey(x.date)===thisMonthKey());
+  const todayTotal = todayExp.reduce((s,x)=>s+Number(x.amount),0);
+  const monthTotal = monthExp.reduce((s,x)=>s+Number(x.amount),0);
+
+  let html = '';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Today</div><div class="value mono">'+money(todayTotal)+'</div></div>';
+  html += '<div class="stat"><div class="label">This month</div><div class="value gold mono">'+money(monthTotal)+'</div></div>';
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Add expense</div>';
+  html += '<label>Category</label>';
+  html += '<select id="expCategory">'+EXPENSE_CATEGORIES.map(c=>'<option value="'+c+'">'+c+'</option>').join('')+'</select>';
+  html += '<div id="expCustomWrap" style="display:'+(expenseCustomCategory?'block':'none')+';"><label>Custom category name</label><input type="text" id="expCustomCat" placeholder="e.g. Internet bill"></div>';
+  html += '<label>Amount</label><input type="number" id="expAmount" min="0" step="1">';
+  html += '<label>Date</label><input type="date" id="expDate" value="'+todayKey()+'">';
+  html += '<label>Note (optional)</label><input type="text" id="expNote" placeholder="e.g. June electricity">';
+  html += '<div style="margin-top:14px;"><button class="action btn-primary" id="saveExpense" style="width:100%">Save expense</button></div>';
+  html += '<div class="err-text" id="addExpenseErr"></div>';
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Expense log</div>';
+  html += '<div style="margin-bottom:10px;"><a href="#" class="export" id="exportExpenses">Export CSV ↓</a></div>';
+  const sorted = expenses.slice().sort((a,b)=>b.timestamp-a.timestamp);
+  if(sorted.length===0){
+    html += '<div class="empty">No expenses logged yet.</div>';
+  } else {
+    html += '<table><tr><th>Date</th><th>Category</th><th>Amount</th><th>Note</th><th></th></tr>';
+    sorted.forEach(x=>{
+      html += '<tr><td class="mono">'+fmtDateShort(x.timestamp||Date.parse(x.date))+'</td><td>'+x.category+'</td><td class="mono">'+money(x.amount)+'</td><td class="hint" style="margin:0;">'+(x.note||'—')+'</td>';
+      html += '<td class="row-actions"><button class="btn-mini" data-edit-expense="'+x.id+'">Edit</button><button class="btn-mini" data-del-expense="'+x.id+'" style="color:var(--danger)">Del</button></td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '</div>';
+
+  el.innerHTML = html;
+  attachExpensesHandlers();
+}
+
+function attachExpensesHandlers(){
+  const exportLink = document.getElementById('exportExpenses');
+  if(exportLink) exportLink.addEventListener('click', e=>{ e.preventDefault(); exportExpensesCsv(); });
+  const catSelect = document.getElementById('expCategory');
+  if(catSelect) catSelect.addEventListener('change', e=>{
+    expenseCustomCategory = (e.target.value==='Other');
+    renderExpensesTab();
+  });
+  const saveBtn = document.getElementById('saveExpense');
+  if(saveBtn) saveBtn.addEventListener('click', async function(){
+    const catRaw = document.getElementById('expCategory').value;
+    const category = catRaw==='Other' ? (document.getElementById('expCustomCat').value.trim()||'Other') : catRaw;
+    const amount = parseFloat(document.getElementById('expAmount').value||0);
+    const date = document.getElementById('expDate').value||todayKey();
+    const note = document.getElementById('expNote').value.trim();
+    if(!amount || amount<=0){ showInlineError('addExpenseErr','Enter an amount greater than 0.'); return; }
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('addExpense', { id: uid(), category, amount, note, date });
+      applyState(data);
+      syncOk(); expenseCustomCategory=false; renderExpensesTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('addExpenseErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-edit-expense]').forEach(b=>b.addEventListener('click', ()=>openEditExpenseModal(b.getAttribute('data-edit-expense'))));
+  document.querySelectorAll('[data-del-expense]').forEach(b=>b.addEventListener('click', ()=>openDeleteExpenseConfirm(b.getAttribute('data-del-expense'))));
+}
+
+function openEditExpenseModal(id){
+  const x = expenses.find(e=>e.id===id);
+  if(!x) return;
+  const isPreset = EXPENSE_CATEGORIES.includes(x.category);
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovEditExpense">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Edit expense</h3>
+        <label>Category</label>
+        <select id="eeCategory">
+          ${EXPENSE_CATEGORIES.map(c=>'<option value="'+c+'" '+(x.category===c?'selected':'')+'>'+c+'</option>').join('')}
+        </select>
+        <div id="eeCustomWrap" style="display:${isPreset?'none':'block'};"><label>Custom category name</label><input type="text" id="eeCustomCat" value="${isPreset?'':x.category}"></div>
+        <label>Amount</label><input type="number" id="eeAmount" min="0" step="1" value="${x.amount}">
+        <label>Date</label><input type="date" id="eeDate" value="${x.date}">
+        <label>Note</label><input type="text" id="eeNote" value="${x.note||''}">
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="saveExpenseEdit">Save changes</button></div>
+        <div class="err-text" id="editExpenseErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('eeCategory').addEventListener('change', e=>{
+    document.getElementById('eeCustomWrap').style.display = e.target.value==='Other' ? 'block' : 'none';
+  });
+  document.getElementById('saveExpenseEdit').addEventListener('click', async function(){
+    const catRaw = document.getElementById('eeCategory').value;
+    const category = catRaw==='Other' ? (document.getElementById('eeCustomCat').value.trim()||'Other') : catRaw;
+    const amount = parseFloat(document.getElementById('eeAmount').value||0);
+    const date = document.getElementById('eeDate').value;
+    const note = document.getElementById('eeNote').value.trim();
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('editExpense', { id, category, amount, note, date });
+      applyState(data);
+      syncOk(); closeModal(); renderExpensesTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('editExpenseErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovEditExpense').addEventListener('click', e=>{ if(e.target.id==='ovEditExpense') closeModal(); });
+}
+
+function openDeleteExpenseConfirm(id){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovDelExpense">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Delete this expense?</h3>
+        <div class="hint">This can't be undone.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep it</button>
+          <button class="action btn-danger" id="confirmDelExpense">Delete</button>
+        </div>
+        <div class="err-text" id="delExpenseErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmDelExpense').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Deleting…');
+    try{
+      const data = await apiPost('deleteExpense', {id});
+      applyState(data);
+      syncOk(); closeModal(); renderExpensesTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('delExpenseErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovDelExpense').addEventListener('click', e=>{ if(e.target.id==='ovDelExpense') closeModal(); });
+}
+
 // ---------- DAILY TAB ----------
 let dailySelectedDate = todayKey();
 function renderDailyTab(){
   const el = document.getElementById('tab-daily');
   let html = '<label>Date</label><input type="date" id="dailyDate" value="'+dailySelectedDate+'">';
   const entries = history.filter(h=>h.date===dailySelectedDate).sort((a,b)=>a.start-b.start);
+  const daySales = sales.filter(s=>s.date===dailySelectedDate);
+  const dayExpenses = expenses.filter(x=>x.date===dailySelectedDate);
   const total = entries.reduce((s,h)=>s+h.total,0);
   const cash = entries.reduce((s,h)=>s+(Number(h.cashAmount)||0),0);
   const online = entries.reduce((s,h)=>s+(Number(h.onlineAmount)||0),0);
 
-  html += '<div class="stat-row" style="margin-top:12px;">';
+  html += renderBusinessSummary(entries, daySales, dayExpenses);
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Gaming</div>';
+  html += '<div class="stat-row">';
   html += '<div class="stat"><div class="label">Total</div><div class="value gold mono">'+money(total)+'</div></div>';
   html += '<div class="stat"><div class="label">Cash</div><div class="value mono">'+money(cash)+'</div></div>';
   html += '<div class="stat"><div class="label">Online</div><div class="value mono">'+money(online)+'</div></div>';
   html += '</div>';
-
-  html += '<div class="card">';
-  html += '<div class="section-title">By system</div>';
   html += renderSystemStackBar(entries);
   html += '</div>';
 
@@ -602,8 +1113,65 @@ function renderDailyTab(){
     html += '</table>';
   }
   html += '</div>';
+
+  html += renderShopDetail(daySales);
+  html += renderExpensesDetail(dayExpenses);
+
   el.innerHTML = html;
   document.getElementById('dailyDate').addEventListener('change', e=>{ dailySelectedDate = e.target.value; renderDailyTab(); });
+}
+
+function renderBusinessSummary(gamingEntries, saleEntries, expenseEntries){
+  const gamingTotal = gamingEntries.reduce((s,h)=>s+h.total,0);
+  const shopRevenue = saleEntries.reduce((s,x)=>s+Number(x.revenue),0);
+  const shopCost = saleEntries.reduce((s,x)=>s+Number(x.cost),0);
+  const shopProfit = shopRevenue-shopCost;
+  const expenseTotal = expenseEntries.reduce((s,x)=>s+Number(x.amount),0);
+  const netProfit = gamingTotal + shopProfit - expenseTotal;
+
+  let html = '<div class="card">';
+  html += '<div class="section-title">Net profit</div>';
+  html += '<div class="stat" style="margin-bottom:12px;"><div class="label">Gaming + shop profit − expenses</div><div class="value gold mono" style="font-size:27px;">'+money(netProfit)+'</div></div>';
+  html += '<table>';
+  html += '<tr><td>Gaming revenue</td><td class="mono" style="text-align:right;">'+money(gamingTotal)+'</td></tr>';
+  html += '<tr><td>Shop revenue</td><td class="mono" style="text-align:right;">'+money(shopRevenue)+'</td></tr>';
+  html += '<tr><td>Shop cost of goods</td><td class="mono" style="text-align:right;">−'+money(shopCost)+'</td></tr>';
+  html += '<tr><td>Expenses</td><td class="mono" style="text-align:right;">−'+money(expenseTotal)+'</td></tr>';
+  html += '</table>';
+  html += '</div>';
+  return html;
+}
+
+function renderShopDetail(saleEntries){
+  const revenue = saleEntries.reduce((s,x)=>s+Number(x.revenue),0);
+  const cost = saleEntries.reduce((s,x)=>s+Number(x.cost),0);
+  const profit = revenue-cost;
+  const top = topSellerFrom(saleEntries);
+  let html = '<div class="card">';
+  html += '<div class="section-title">Shop</div>';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Revenue</div><div class="value mono">'+money(revenue)+'</div></div>';
+  html += '<div class="stat"><div class="label">Profit</div><div class="value gold mono">'+money(profit)+'</div></div>';
+  html += '</div>';
+  html += top ? ('<div class="hint">Most sold: <b>'+top.name+'</b> ('+top.qty+' units)</div>') : '<div class="hint">No sales in this period.</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderExpensesDetail(expenseEntries){
+  const total = expenseEntries.reduce((s,x)=>s+Number(x.amount),0);
+  let html = '<div class="card">';
+  html += '<div class="section-title">Expenses ('+expenseEntries.length+')</div>';
+  html += '<div class="hint">Total <b class="mono" style="color:var(--text);">'+money(total)+'</b></div>';
+  if(expenseEntries.length){
+    html += '<table style="margin-top:8px;"><tr><th>Category</th><th>Amount</th><th>Note</th></tr>';
+    expenseEntries.slice().sort((a,b)=>b.timestamp-a.timestamp).forEach(x=>{
+      html += '<tr><td>'+x.category+'</td><td class="mono">'+money(x.amount)+'</td><td class="hint" style="margin:0;">'+(x.note||'—')+'</td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '</div>';
+  return html;
 }
 
 function renderSystemStackBar(entries){
@@ -625,6 +1193,8 @@ function renderMonthlyTab(){
   const el = document.getElementById('tab-monthly');
   let html = '<label>Month</label><input type="month" id="monthlyMonth" value="'+monthlySelected+'">';
   const entries = history.filter(h=>monthKey(h.date)===monthlySelected);
+  const monthSales = sales.filter(s=>monthKey(s.date)===monthlySelected);
+  const monthExpenses = expenses.filter(x=>monthKey(x.date)===monthlySelected);
   const total = entries.reduce((s,h)=>s+h.total,0);
   const cash = entries.reduce((s,h)=>s+(Number(h.cashAmount)||0),0);
   const online = entries.reduce((s,h)=>s+(Number(h.onlineAmount)||0),0);
@@ -637,7 +1207,11 @@ function renderMonthlyTab(){
   const activeDays = Object.values(perDay).filter(v=>v>0).length;
   const avg = activeDays ? total/activeDays : 0;
 
-  html += '<div class="stat-row" style="margin-top:12px;">';
+  html += renderBusinessSummary(entries, monthSales, monthExpenses);
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Gaming</div>';
+  html += '<div class="stat-row">';
   html += '<div class="stat"><div class="label">Total</div><div class="value gold mono">'+money(total)+'</div></div>';
   html += '<div class="stat"><div class="label">Cash</div><div class="value mono">'+money(cash)+'</div></div>';
   html += '<div class="stat"><div class="label">Online</div><div class="value mono">'+money(online)+'</div></div>';
@@ -646,8 +1220,8 @@ function renderMonthlyTab(){
   html += '<div class="stat"><div class="label">Sessions</div><div class="value mono">'+entries.length+'</div></div>';
   html += '<div class="stat"><div class="label">Avg / active day</div><div class="value mono">'+money(avg)+'</div></div>';
   html += '</div>';
-
-  html += '<div class="card"><div class="section-title">By system</div>'+renderSystemStackBar(entries)+'</div>';
+  html += renderSystemStackBar(entries);
+  html += '</div>';
 
   html += '<div class="card"><div class="section-title">Day by day</div>';
   for(let d=1; d<=daysInMonth; d++){
@@ -656,6 +1230,9 @@ function renderMonthlyTab(){
     html += '<div class="daybar-row"><div class="d mono">'+pad(d)+'</div><div class="track"><div class="fill" style="width:'+pct+'%"></div></div><div class="amt mono">'+(amt?money(amt):'—')+'</div></div>';
   }
   html += '</div>';
+
+  html += renderShopDetail(monthSales);
+  html += renderExpensesDetail(monthExpenses);
 
   el.innerHTML = html;
   document.getElementById('monthlyMonth').addEventListener('change', e=>{ monthlySelected = e.target.value; renderMonthlyTab(); });
@@ -801,7 +1378,7 @@ function openEditHistModal(id){
     const restore = setButtonBusy(this, 'Saving…');
     try{
       const data = await apiPost('editHistory', { id, players, hours, payment, hourly, cashAmount, onlineAmount });
-      activeSessions = data.activeSessions; history = data.history;
+      applyState(data);
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
       syncFail(e); restore();
@@ -831,7 +1408,7 @@ function openDeleteHistConfirm(id){
     const restore = setButtonBusy(this, 'Deleting…');
     try{
       const data = await apiPost('deleteHistory', {id});
-      activeSessions = data.activeSessions; history = data.history;
+      applyState(data);
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
       syncFail(e); restore();
@@ -843,7 +1420,7 @@ function openDeleteHistConfirm(id){
 }
 
 function downloadBackup(){
-  const payload = { exportedAt: new Date().toISOString(), activeSessions, history };
+  const payload = { exportedAt: new Date().toISOString(), activeSessions, history, products, sales, expenses };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -875,12 +1452,17 @@ function handleRestoreFile(e){
 function openRestoreConfirm(data){
   const root = document.getElementById('modal-root');
   const when = data.exportedAt ? fmtDateShort(new Date(data.exportedAt).getTime()) : 'this file';
+  let detail = data.activeSessions.length+' active session(s) and '+data.history.length+' history entries';
+  if(data.products!==undefined) detail += ', '+data.products.length+' products';
+  if(data.sales!==undefined) detail += ', '+data.sales.length+' sales';
+  if(data.expenses!==undefined) detail += ', '+data.expenses.length+' expenses';
+  const missingNote = (data.products===undefined) ? ' This is an older-format backup, so your current Shop and Expenses data will be left untouched.' : '';
   root.innerHTML = `
     <div class="overlay" id="ovRestore">
       <div class="sheet">
         <button class="close-x" data-close>✕</button>
         <h3>Restore this backup?</h3>
-        <div class="hint">Found ${data.activeSessions.length} active session(s) and ${data.history.length} history entries, backed up ${when}. This replaces everything in the Google Sheet, on every device — it can't be undone either.</div>
+        <div class="hint">Found ${detail}, backed up ${when}. This replaces that data in the Google Sheet, on every device — it can't be undone.${missingNote}</div>
         <div class="btn-row" style="margin-top:16px;">
           <button class="action btn-ghost" data-close>Cancel</button>
           <button class="action btn-primary" id="confirmRestore">Replace with backup</button>
@@ -891,8 +1473,12 @@ function openRestoreConfirm(data){
   document.getElementById('confirmRestore').addEventListener('click', async function(){
     const restore = setButtonBusy(this, 'Restoring…');
     try{
-      const result = await apiPost('restoreAll', { activeSessions: data.activeSessions, history: data.history });
-      activeSessions = result.activeSessions; history = result.history;
+      const payload = { activeSessions: data.activeSessions, history: data.history };
+      if(data.products!==undefined) payload.products = data.products;
+      if(data.sales!==undefined) payload.sales = data.sales;
+      if(data.expenses!==undefined) payload.expenses = data.expenses;
+      const result = await apiPost('restoreAll', payload);
+      applyState(result);
       syncOk(); closeModal(); renderCurrentTab();
     }catch(e){
       syncFail(e); restore();
@@ -908,11 +1494,31 @@ function exportCsv(entries){
   entries.forEach(h=>{
     rows.push([h.date, SYSTEMS[h.sys].name, h.players, fmtTime(h.start), h.hours, h.hourly, h.total, h.payment, Math.round(h.cashAmount||0), Math.round(h.onlineAmount||0)]);
   });
+  downloadCsv(rows, 'gamezone-history.csv');
+}
+
+function exportSalesCsv(){
+  const rows = [['Date','Time','Product','Category','Qty','Cost Price','Sell Price','Revenue','Cost','Profit','Payment']];
+  sales.slice().sort((a,b)=>a.timestamp-b.timestamp).forEach(s=>{
+    rows.push([s.date, fmtTime(s.timestamp), s.productName, s.category, s.qty, s.costPrice, s.sellPrice, s.revenue, s.cost, s.profit, s.payment]);
+  });
+  downloadCsv(rows, 'gamezone-sales.csv');
+}
+
+function exportExpensesCsv(){
+  const rows = [['Date','Category','Amount','Note']];
+  expenses.slice().sort((a,b)=>a.timestamp-b.timestamp).forEach(x=>{
+    rows.push([x.date, x.category, x.amount, x.note||'']);
+  });
+  downloadCsv(rows, 'gamezone-expenses.csv');
+}
+
+function downloadCsv(rows, filename){
   const csv = rows.map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'gamezone-history.csv';
+  a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
