@@ -179,7 +179,7 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyvOzmeqFRdLE2fpJnKsS6leeMuA21fq6tcHclZ6spYom1Ss6i6sQx4FlDw7bHUzx4D/exec';
+const API_URL = 'PASTE_YOUR_WEB_APP_URL_HERE';
 
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
@@ -286,10 +286,21 @@ async function pollState(){
       JSON.stringify(data.expenses)!==JSON.stringify(expenses);
     if(changed){
       applyState(data);
-      renderCurrentTab();
+      // Don't blow away a form the person is actively typing into — the
+      // data is still refreshed underneath, it'll just render on the next
+      // safe opportunity (they finish, submit, or switch tabs).
+      if(!userIsEditingCurrentTab()) renderCurrentTab();
     }
     syncOk();
   }catch(e){ syncFail(e); }
+}
+function userIsEditingCurrentTab(){
+  const active = document.activeElement;
+  if(!active) return false;
+  const tag = active.tagName;
+  if(tag!=='INPUT' && tag!=='SELECT' && tag!=='TEXTAREA') return false;
+  const tabEl = document.getElementById('tab-'+currentTab);
+  return !!(tabEl && tabEl.contains(active));
 }
 
 // ---------- Clock ----------
@@ -977,7 +988,8 @@ function attachExpensesHandlers(){
   const catSelect = document.getElementById('expCategory');
   if(catSelect) catSelect.addEventListener('change', e=>{
     expenseCustomCategory = (e.target.value==='Other');
-    renderExpensesTab();
+    const wrap = document.getElementById('expCustomWrap');
+    if(wrap) wrap.style.display = expenseCustomCategory ? 'block' : 'none';
   });
   const saveBtn = document.getElementById('saveExpense');
   if(saveBtn) saveBtn.addEventListener('click', async function(){
