@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>Vapi GameZone Sales Console</title>
+<title>GameZone Sales Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -98,6 +98,15 @@
   .product-tile .pprice{font-size:13px;color:var(--gold);margin-top:2px;}
   .product-tile .pstock{font-size:10px;color:var(--muted);margin-top:2px;}
   .product-tile .pstock.low{color:var(--danger);}
+  .pimg-wrap{width:100%;aspect-ratio:1/1;border-radius:8px;overflow:hidden;margin-bottom:6px;background:var(--panel);}
+  .pimg-wrap img{width:100%;height:100%;object-fit:cover;display:block;}
+  .pimg-fallback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-weight:700;color:#fff;}
+  .pimg-fallback.lg{font-size:22px;}
+  .pimg-fallback.sm{font-size:11px;}
+  .thumb-sm{width:26px;height:26px;border-radius:6px;overflow:hidden;display:inline-flex;vertical-align:middle;margin-right:6px;flex-shrink:0;}
+  .img-preview{width:76px;height:76px;border-radius:10px;overflow:hidden;background:var(--panel2);align-items:center;justify-content:center;margin-top:8px;}
+  .img-preview img{width:100%;height:100%;object-fit:cover;display:block;}
+  input[type=file]{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--muted);padding:8px;border-radius:10px;font-size:12.5px;}
 
   .stepper{display:flex;align-items:center;gap:10px;justify-content:center;background:var(--panel2);border-radius:10px;padding:8px;}
   .stepper button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:18px;cursor:pointer;transition:transform .12s ease;}
@@ -179,7 +188,7 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec?action=getAll';
+const API_URL = 'PASTE_YOUR_WEB_APP_URL_HERE';
 
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
@@ -254,6 +263,47 @@ function setButtonBusy(btn, busyText){
   const original = btn.textContent;
   btn.disabled = true; btn.textContent = busyText;
   return ()=>{ btn.disabled = false; btn.textContent = original; };
+}
+
+// Resize + compress a chosen photo down to a small thumbnail so it fits
+// comfortably inside a single Google Sheets cell (50,000 char limit).
+// Automatically steps quality down if the first pass is still too big.
+function resizeImageFile(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        const maxDim = 160;
+        if(w >= h){ if(w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; } }
+        else { if(h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; } }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        (function tryQuality(q){
+          const uri = canvas.toDataURL('image/jpeg', q);
+          if(uri.length > 40000 && q > 0.2){ tryQuality(q-0.15); }
+          else { resolve(uri); }
+        })(0.7);
+      };
+      img.onerror = ()=>reject(new Error('bad image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = ()=>reject(new Error('bad file'));
+    reader.readAsDataURL(file);
+  });
+}
+function avatarColor(name){
+  const palette = ['#9B7BFF','#5FD34A','#2FA8E8','#F2B705','#FF5C5C','#F2A93B'];
+  let hash = 0;
+  for(let i=0;i<(name||'').length;i++){ hash = name.charCodeAt(i) + ((hash<<5)-hash); }
+  return palette[Math.abs(hash) % palette.length];
+}
+function productThumbInner(p, size){
+  if(p.imageData) return '<img src="'+p.imageData+'" alt="">';
+  const initial = (p.name||'?').trim().charAt(0).toUpperCase() || '?';
+  return '<div class="pimg-fallback '+size+'" style="background:'+avatarColor(p.name||'')+'">'+initial+'</div>';
 }
 function showInlineError(id, msg){
   const el = document.getElementById(id);
@@ -611,6 +661,7 @@ function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
 
 // ---------- SHOP TAB ----------
 let showAddProduct = false;
+let newProductImageData = '';
 
 function productsSorted(){
   const order = {snack:0, drink:1, other:2};
@@ -651,6 +702,7 @@ function renderShopTab(){
     productsSorted().forEach(p=>{
       const out = p.stock<=0;
       html += '<div class="product-tile'+(out?' outofstock':'')+'" '+(out?'':'data-sell-product="'+p.id+'"')+'>';
+      html += '<div class="pimg-wrap">'+productThumbInner(p,'lg')+'</div>';
       html += '<div class="pname">'+p.name+'</div>';
       html += '<div class="pprice mono">'+money(p.sellPrice)+'</div>';
       html += '<div class="pstock'+(p.stock<=LOW_STOCK_THRESHOLD?' low':'')+'">'+(out?'Out of stock':p.stock+' left')+'</div>';
@@ -667,7 +719,7 @@ function renderShopTab(){
   } else {
     html += '<table><tr><th>Name</th><th>Cat</th><th>Cost</th><th>Sell</th><th>Stock</th><th></th></tr>';
     productsSorted().forEach(p=>{
-      html += '<tr><td>'+p.name+'</td><td class="hint" style="margin:0;">'+(PRODUCT_CATEGORIES[p.category]||p.category)+'</td><td class="mono">'+money(p.costPrice)+'</td><td class="mono">'+money(p.sellPrice)+'</td><td class="mono" style="'+(p.stock<=LOW_STOCK_THRESHOLD?'color:var(--danger)':'')+'">'+p.stock+'</td>';
+      html += '<tr><td><span class="thumb-sm">'+productThumbInner(p,'sm')+'</span>'+p.name+'</td><td class="hint" style="margin:0;">'+(PRODUCT_CATEGORIES[p.category]||p.category)+'</td><td class="mono">'+money(p.costPrice)+'</td><td class="mono">'+money(p.sellPrice)+'</td><td class="mono" style="'+(p.stock<=LOW_STOCK_THRESHOLD?'color:var(--danger)':'')+'">'+p.stock+'</td>';
       html += '<td class="row-actions"><button class="btn-mini" data-restock="'+p.id+'">+Stock</button><button class="btn-mini" data-edit-product="'+p.id+'">Edit</button><button class="btn-mini" data-del-product="'+p.id+'" style="color:var(--danger)">Del</button></td></tr>';
     });
     html += '</table>';
@@ -678,6 +730,8 @@ function renderShopTab(){
     html += '<label>Category</label><select id="npCategory"><option value="snack">Snack</option><option value="drink">Drink</option><option value="other">Other</option></select>';
     html += '<div class="split-row"><div><label>Cost price</label><input type="number" id="npCost" min="0" step="1" value="0"></div><div><label>Sell price</label><input type="number" id="npSell" min="0" step="1" value="0"></div></div>';
     html += '<label>Starting stock</label><input type="number" id="npStock" min="0" step="1" value="0">';
+    html += '<label>Photo (optional)</label><input type="file" accept="image/*" id="npImageFile">';
+    html += '<div class="img-preview" id="npImagePreviewWrap" style="display:none;"></div>';
     html += '<div style="margin-top:14px;"><button class="action btn-primary" id="saveNewProduct" style="width:100%">Save product</button></div>';
     html += '<div class="err-text" id="addProductErr"></div>';
   }
@@ -720,9 +774,19 @@ function attachShopHandlers(){
     openDeleteSaleConfirm(b.getAttribute('data-del-sale'));
   }));
   const toggleBtn = document.getElementById('toggleAddProduct');
-  if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ showAddProduct = !showAddProduct; renderShopTab(); });
+  if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ showAddProduct = !showAddProduct; newProductImageData=''; renderShopTab(); });
   const exportSalesLink = document.getElementById('exportSales');
   if(exportSalesLink) exportSalesLink.addEventListener('click', e=>{ e.preventDefault(); exportSalesCsv(); });
+  const npImageFile = document.getElementById('npImageFile');
+  if(npImageFile) npImageFile.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      newProductImageData = await resizeImageFile(file);
+      const wrap = document.getElementById('npImagePreviewWrap');
+      wrap.style.display='flex'; wrap.innerHTML = '<img src="'+newProductImageData+'" alt="">';
+    }catch(err){ showInlineError('addProductErr', "Couldn't read that photo — try a different one."); }
+  });
   const saveBtn = document.getElementById('saveNewProduct');
   if(saveBtn) saveBtn.addEventListener('click', async function(){
     const name = document.getElementById('npName').value.trim();
@@ -733,9 +797,9 @@ function attachShopHandlers(){
     if(!name){ showInlineError('addProductErr','Give the product a name.'); return; }
     const restore = setButtonBusy(this, 'Saving…');
     try{
-      const data = await apiPost('addProduct', { id: uid(), name, category, costPrice, sellPrice, stock });
+      const data = await apiPost('addProduct', { id: uid(), name, category, costPrice, sellPrice, stock, imageData: newProductImageData });
       applyState(data);
-      syncOk(); showAddProduct = false; renderShopTab();
+      syncOk(); showAddProduct = false; newProductImageData=''; renderShopTab();
     }catch(e){
       syncFail(e); restore();
       showInlineError('addProductErr', "Couldn't save — check your connection and try again.");
@@ -829,6 +893,7 @@ function openRestockModal(id){
 function openEditProductModal(id){
   const p = products.find(x=>x.id===id);
   if(!p) return;
+  let editProductImageData = p.imageData || '';
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="overlay" id="ovEditProduct">
@@ -846,10 +911,30 @@ function openEditProductModal(id){
         <label>Stock (direct correction)</label>
         <input type="number" id="epStock" min="0" step="1" value="${p.stock}">
         <div class="hint">Use this only to correct a miscount — for a normal delivery, use Restock instead so it isn't lost from the record.</div>
+        <label>Photo (optional)</label>
+        <input type="file" accept="image/*" id="epImageFile">
+        <div class="img-preview" id="epImagePreviewWrap" style="${p.imageData?'display:flex;':'display:none;'}">${p.imageData?'<img src="'+p.imageData+'" alt="">':''}</div>
+        <button type="button" class="btn-mini" id="epRemoveImage" style="margin-top:8px;${p.imageData?'':'display:none;'}">Remove photo</button>
         <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="saveProductEdit">Save changes</button></div>
         <div class="err-text" id="editProductErr"></div>
       </div>
     </div>`;
+  const epPreviewWrap = document.getElementById('epImagePreviewWrap');
+  const epRemoveBtn = document.getElementById('epRemoveImage');
+  document.getElementById('epImageFile').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      editProductImageData = await resizeImageFile(file);
+      epPreviewWrap.style.display='flex'; epPreviewWrap.innerHTML = '<img src="'+editProductImageData+'" alt="">';
+      epRemoveBtn.style.display='inline-block';
+    }catch(err){ showInlineError('editProductErr', "Couldn't read that photo — try a different one."); }
+  });
+  epRemoveBtn.addEventListener('click', ()=>{
+    editProductImageData = '';
+    epPreviewWrap.style.display='none'; epPreviewWrap.innerHTML='';
+    epRemoveBtn.style.display='none';
+  });
   document.getElementById('saveProductEdit').addEventListener('click', async function(){
     const name = document.getElementById('epName').value.trim();
     const category = document.getElementById('epCategory').value;
@@ -859,7 +944,7 @@ function openEditProductModal(id){
     if(!name){ showInlineError('editProductErr','Give the product a name.'); return; }
     const restore = setButtonBusy(this, 'Saving…');
     try{
-      const data = await apiPost('editProduct', { id, name, category, costPrice, sellPrice, stock });
+      const data = await apiPost('editProduct', { id, name, category, costPrice, sellPrice, stock, imageData: editProductImageData });
       applyState(data);
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
