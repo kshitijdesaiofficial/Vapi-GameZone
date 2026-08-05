@@ -538,93 +538,157 @@ function openCheckoutModal(id){
   const billableMin = Math.max(0, elapsedMin - (s.freeMin||0));
   const suggestedHours = Math.max(0.25, Math.ceil(billableMin/15)*15/60);
   let payment = 'cash';
-  const startingTotal = Math.round(suggestedHours*rate);
+  let cart = []; // [{productId, name, sellPrice, qty}]
+  let pendingProductId = '';
+  let pendingQty = 1;
 
   const root = document.getElementById('modal-root');
-  root.innerHTML = `
-    <div class="overlay" id="ovCheckout">
-      <div class="sheet">
-        <button class="close-x" data-close>✕</button>
-        <h3 style="color:${sys.color}">Checkout · ${sys.name}</h3>
-        <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · rate ${money(rate)}/hr${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
-        <label>Billable hours</label>
-        <input type="number" id="hoursInput" step="0.25" min="0.25" value="${suggestedHours}">
-        <label>Mode of payment</label>
-        <div class="pay-toggle">
-          <button data-pay="cash" class="selected">Cash</button>
-          <button data-pay="online">Online</button>
-          <button data-pay="split">Split</button>
-        </div>
-        <div id="splitRow" style="display:none;">
+
+  function currentHours(){
+    const el = document.getElementById('hoursInput');
+    return el ? Math.max(0.25, parseFloat(el.value||suggestedHours)) : suggestedHours;
+  }
+  function gamingSubtotal(){ return Math.round(currentHours()*rate); }
+  function cartSubtotal(){ return cart.reduce((sum,c)=>sum+c.qty*c.sellPrice,0); }
+  function grandTotal(){ return gamingSubtotal() + cartSubtotal(); }
+
+  function render(){
+    const total = grandTotal();
+    const availableProducts = products.filter(p=>p.stock>0);
+    root.innerHTML = `
+      <div class="overlay" id="ovCheckout">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3 style="color:${sys.color}">Checkout · ${sys.name}</h3>
+          <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · rate ${money(rate)}/hr${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
+          <label>Billable hours</label>
+          <input type="number" id="hoursInput" step="0.25" min="0.25" value="${currentHours()}">
+          <div class="hint">Gaming subtotal: <b class="mono" id="gamingSubHint">${money(gamingSubtotal())}</b></div>
+          ${availableProducts.length ? `
+          <div class="divider"></div>
+          <label>Add snacks / drinks (optional)</label>
           <div class="split-row">
-            <div><label>Cash</label><input type="number" id="cashAmountInput" min="0" step="1" value="${startingTotal}"></div>
-            <div><label>Online</label><input type="number" id="onlineAmountInput" min="0" step="1" value="0"></div>
+            <div style="flex:2;">
+              <select id="cartProductSelect">
+                <option value="">Choose a product…</option>
+                ${availableProducts.map(p=>'<option value="'+p.id+'"'+(pendingProductId===p.id?' selected':'')+'>'+p.name+' — '+money(p.sellPrice)+' ('+p.stock+' left)</option>').join('')}
+              </select>
+            </div>
+            <div style="flex:1;">
+              <div class="stepper"><button type="button" id="cartQtyDec">−</button><div class="n mono">${pendingQty}</div><button type="button" id="cartQtyInc">+</button></div>
+            </div>
           </div>
-          <div class="hint">Edit either amount — the other adjusts to keep the total right.</div>
+          <button class="action btn-ghost" id="addCartItemBtn" style="width:100%;margin-top:8px;">+ Add to bill</button>
+          ${cart.length ? `<div style="margin-top:10px;">${cart.map((c,idx)=>
+            '<div class="free-row"><span>'+c.qty+'× '+c.name+' <span class="mono">('+money(c.qty*c.sellPrice)+')</span></span><button class="btn-mini" data-remove-cart="'+idx+'" style="color:var(--danger)">Remove</button></div>'
+          ).join('')}</div>
+          <div class="hint">Snacks subtotal: <b class="mono">${money(cartSubtotal())}</b></div>` : ''}
+          ` : ''}
+          <div class="divider"></div>
+          <label>Mode of payment</label>
+          <div class="pay-toggle">
+            <button data-pay="cash" class="${payment==='cash'?'selected':''}">Cash</button>
+            <button data-pay="online" class="${payment==='online'?'selected':''}">Online</button>
+            <button data-pay="split" class="${payment==='split'?'selected':''}">Split</button>
+          </div>
+          <div id="splitRow" style="display:${payment==='split'?'block':'none'};">
+            <div class="split-row">
+              <div><label>Cash</label><input type="number" id="cashAmountInput" min="0" step="1" value="${total}"></div>
+              <div><label>Online</label><input type="number" id="onlineAmountInput" min="0" step="1" value="0"></div>
+            </div>
+            <div class="hint">Edit either amount — the other adjusts to keep the total right.</div>
+          </div>
+          <div class="stat" style="margin-top:14px;">
+            <div class="label">Total bill${cart.length?' (gaming + snacks)':''}</div>
+            <div class="value gold mono" id="totalPreview">${money(total)}</div>
+          </div>
+          <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
+          <div class="err-text" id="checkoutErr"></div>
         </div>
-        <div class="stat" style="margin-top:14px;">
-          <div class="label">Total bill</div>
-          <div class="value gold mono" id="totalPreview">${money(startingTotal)}</div>
-        </div>
-        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
-        <div class="err-text" id="checkoutErr"></div>
-      </div>
-    </div>`;
-
-  const hoursInput = document.getElementById('hoursInput');
-  const totalPreview = document.getElementById('totalPreview');
-  const splitRow = document.getElementById('splitRow');
-  const cashAmountInput = document.getElementById('cashAmountInput');
-  const onlineAmountInput = document.getElementById('onlineAmountInput');
-
-  function currentTotal(){ return Math.round(parseFloat(hoursInput.value||0)*rate); }
-  function resetSplitDefaults(){
-    const t = currentTotal();
-    cashAmountInput.value = t;
-    onlineAmountInput.value = 0;
+      </div>`;
+    attachHandlers();
   }
-  function recompute(){
-    totalPreview.textContent = money(currentTotal());
-    if(payment==='split') resetSplitDefaults();
-  }
-  hoursInput.addEventListener('input', recompute);
 
-  document.querySelectorAll('[data-pay]').forEach(b=>b.addEventListener('click', ()=>{
-    payment = b.getAttribute('data-pay');
-    document.querySelectorAll('[data-pay]').forEach(x=>x.classList.toggle('selected', x===b));
-    splitRow.style.display = payment==='split' ? 'block' : 'none';
-    if(payment==='split') resetSplitDefaults();
-  }));
-  cashAmountInput.addEventListener('input', ()=>{
-    const t = currentTotal();
-    const cash = Math.max(0, Math.min(t, parseFloat(cashAmountInput.value||0)));
-    onlineAmountInput.value = Math.round(t-cash);
-  });
-  onlineAmountInput.addEventListener('input', ()=>{
-    const t = currentTotal();
-    const online = Math.max(0, Math.min(t, parseFloat(onlineAmountInput.value||0)));
-    cashAmountInput.value = Math.round(t-online);
-  });
-
-  document.getElementById('confirmCheckout').addEventListener('click', async function(){
-    const hours = Math.max(0.25, parseFloat(hoursInput.value||suggestedHours));
-    const total = Math.round(hours*rate);
-    let cashAmount, onlineAmount;
-    if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
-    else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
-    else { cashAmount = Math.round(parseFloat(cashAmountInput.value||0)); onlineAmount = Math.round(parseFloat(onlineAmountInput.value||0)); }
-    const restore = setButtonBusy(this, 'Saving…');
-    try{
-      const data = await apiPost('checkoutSession', { id, hours, payment, hourly: rate, cashAmount, onlineAmount });
-      applyState(data);
-      syncOk(); closeModal(); renderCurrentTab();
-    }catch(e){
-      syncFail(e); restore();
-      showInlineError('checkoutErr', "Couldn't save this — check your connection and try again.");
+  function refreshTotals(){
+    const t = grandTotal();
+    const gh = document.getElementById('gamingSubHint'); if(gh) gh.textContent = money(gamingSubtotal());
+    const tp = document.getElementById('totalPreview'); if(tp) tp.textContent = money(t);
+    if(payment==='split'){
+      const ci = document.getElementById('cashAmountInput'), oi = document.getElementById('onlineAmountInput');
+      if(ci && oi){ ci.value = t; oi.value = 0; }
     }
-  });
-  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
-  document.getElementById('ovCheckout').addEventListener('click', e=>{ if(e.target.id==='ovCheckout') closeModal(); });
+  }
+
+  function attachHandlers(){
+    const hoursInput = document.getElementById('hoursInput');
+    if(hoursInput) hoursInput.addEventListener('input', refreshTotals);
+
+    const sel = document.getElementById('cartProductSelect');
+    if(sel) sel.addEventListener('change', e=>{ pendingProductId = e.target.value; });
+    const qDec = document.getElementById('cartQtyDec'), qInc = document.getElementById('cartQtyInc');
+    if(qDec) qDec.addEventListener('click', ()=>{ if(pendingQty>1){ pendingQty--; render(); }});
+    if(qInc) qInc.addEventListener('click', ()=>{ pendingQty++; render(); });
+    const addBtn = document.getElementById('addCartItemBtn');
+    if(addBtn) addBtn.addEventListener('click', ()=>{
+      if(!pendingProductId) return;
+      const p = products.find(x=>x.id===pendingProductId);
+      if(!p) return;
+      const existing = cart.find(c=>c.productId===p.id);
+      if(existing) existing.qty += pendingQty;
+      else cart.push({ productId:p.id, name:p.name, sellPrice:p.sellPrice, qty:pendingQty });
+      pendingProductId=''; pendingQty=1;
+      render();
+    });
+    document.querySelectorAll('[data-remove-cart]').forEach(b=>b.addEventListener('click', ()=>{
+      cart.splice(parseInt(b.getAttribute('data-remove-cart')),1);
+      render();
+    }));
+
+    document.querySelectorAll('[data-pay]').forEach(b=>b.addEventListener('click', ()=>{
+      payment = b.getAttribute('data-pay');
+      render();
+    }));
+    const cashAmountInput = document.getElementById('cashAmountInput');
+    const onlineAmountInput = document.getElementById('onlineAmountInput');
+    if(cashAmountInput) cashAmountInput.addEventListener('input', ()=>{
+      const t = grandTotal();
+      const cash = Math.max(0, Math.min(t, parseFloat(cashAmountInput.value||0)));
+      onlineAmountInput.value = Math.round(t-cash);
+    });
+    if(onlineAmountInput) onlineAmountInput.addEventListener('input', ()=>{
+      const t = grandTotal();
+      const online = Math.max(0, Math.min(t, parseFloat(onlineAmountInput.value||0)));
+      cashAmountInput.value = Math.round(t-online);
+    });
+
+    document.getElementById('confirmCheckout').addEventListener('click', async function(){
+      const hours = currentHours();
+      const total = grandTotal();
+      let cashAmount, onlineAmount;
+      if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
+      else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
+      else {
+        cashAmount = Math.round(parseFloat(document.getElementById('cashAmountInput').value||0));
+        onlineAmount = Math.round(parseFloat(document.getElementById('onlineAmountInput').value||0));
+      }
+      const restore = setButtonBusy(this, 'Saving…');
+      try{
+        const data = await apiPost('checkoutSession', {
+          id, hours, payment, hourly: rate, cashAmount, onlineAmount,
+          items: cart.map(c=>({ productId: c.productId, qty: c.qty }))
+        });
+        applyState(data);
+        syncOk(); closeModal(); renderCurrentTab();
+      }catch(e){
+        syncFail(e); restore();
+        showInlineError('checkoutErr', "Couldn't save this — check your connection and try again.");
+      }
+    });
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovCheckout').addEventListener('click', e=>{ if(e.target.id==='ovCheckout') closeModal(); });
+  }
+
+  render();
 }
 
 function openCancelConfirm(id){
