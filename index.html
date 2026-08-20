@@ -67,6 +67,9 @@
   .metric .v{font-size:18px;font-weight:600;margin-top:2px;}
   .metric .v.gold{color:var(--gold);text-shadow:0 0 14px rgba(242,183,5,.45);}
   .free-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:10px;}
+  .pending-items{margin:-4px 0 10px;padding:2px 0 2px 4px;border-left:2px solid var(--border);}
+  .pending-item-row{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--muted);padding:3px 0;}
+  .pending-item-row .btn-mini{padding:2px 8px;font-size:13px;line-height:1;}
   .btn-row{display:flex;gap:8px;}
   button.action{flex:1;border:none;border-radius:10px;padding:10px;font-weight:600;font-size:13px;font-family:'Inter',sans-serif;cursor:pointer;transition:transform .12s ease, box-shadow .2s ease;}
   button.action:active:not(:disabled){transform:scale(.96);}
@@ -188,7 +191,7 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
+const API_URL = 'PASTE_YOUR_WEB_APP_URL_HERE';
 
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
@@ -230,6 +233,7 @@ let history = [];
 let products = [];
 let sales = [];
 let expenses = [];
+let pendingItems = [];
 let currentTab = 'active';
 let newSessionSys = null;
 let newSessionPlayers = 1;
@@ -317,6 +321,7 @@ function syncFail(e){ syncFailStreak++; console.error(e); updateSyncStatus(); }
 function applyState(data){
   activeSessions = data.activeSessions; history = data.history;
   products = data.products||[]; sales = data.sales||[]; expenses = data.expenses||[];
+  pendingItems = data.pendingItems||[];
 }
 
 async function initialLoad(){
@@ -333,7 +338,8 @@ async function pollState(){
       JSON.stringify(data.history)!==JSON.stringify(history) ||
       JSON.stringify(data.products)!==JSON.stringify(products) ||
       JSON.stringify(data.sales)!==JSON.stringify(sales) ||
-      JSON.stringify(data.expenses)!==JSON.stringify(expenses);
+      JSON.stringify(data.expenses)!==JSON.stringify(expenses) ||
+      JSON.stringify(data.pendingItems)!==JSON.stringify(pendingItems);
     if(changed){
       applyState(data);
       // Don't blow away a form the person is actively typing into — the
@@ -439,6 +445,16 @@ function renderActiveTab(){
       html += '<div class="metric"><div class="l">Rate/hr</div><div class="v mono">'+money(rate)+'</div></div>';
       html += '</div>';
       html += '<div class="free-row"><span>Free/comp time given: <b class="mono">'+(s.freeMin||0)+' min</b></span><button class="btn-mini" data-add-free="'+s.id+'">+15 min free</button></div>';
+      const sessionItems = pendingItems.filter(pi=>pi.sessionId===s.id);
+      const sessionItemsTotal = sessionItems.reduce((sum,pi)=>sum+pi.qty*pi.sellPrice,0);
+      html += '<div class="free-row"><span>Snacks so far: <b class="mono">'+money(sessionItemsTotal)+'</b>'+(sessionItems.length?' ('+sessionItems.length+' item'+(sessionItems.length>1?'s':'')+')':'')+'</span><button class="btn-mini" data-add-item="'+s.id+'">+ Add item</button></div>';
+      if(sessionItems.length){
+        html += '<div class="pending-items">';
+        sessionItems.forEach(pi=>{
+          html += '<div class="pending-item-row"><span>'+pi.qty+'× '+pi.name+' <span class="mono">('+money(pi.qty*pi.sellPrice)+')</span></span><button class="btn-mini" data-remove-pending="'+pi.id+'" style="color:var(--danger)">×</button></div>';
+        });
+        html += '</div>';
+      }
       html += '<div class="btn-row">';
       html += '<button class="action btn-primary" data-checkout="'+s.id+'">Checkout</button>';
       html += '<button class="action btn-danger" data-cancel="'+s.id+'">Cancel</button>';
@@ -510,6 +526,18 @@ function attachActiveHandlers(){
   document.querySelectorAll('[data-cancel]').forEach(b=>b.addEventListener('click', ()=>{
     openCancelConfirm(b.getAttribute('data-cancel'));
   }));
+  document.querySelectorAll('[data-add-item]').forEach(b=>b.addEventListener('click', ()=>{
+    openAddItemModal(b.getAttribute('data-add-item'));
+  }));
+  document.querySelectorAll('[data-remove-pending]').forEach(b=>b.addEventListener('click', async ()=>{
+    const id = b.getAttribute('data-remove-pending');
+    const restore = setButtonBusy(b, '…');
+    try{
+      const data = await apiPost('removePendingItem', {id});
+      applyState(data);
+      syncOk(); renderActiveTab();
+    }catch(e){ syncFail(e); restore(); }
+  }));
 }
 
 async function startSession(){
@@ -549,11 +577,14 @@ function openCheckoutModal(id){
     return el ? Math.max(0.25, parseFloat(el.value||suggestedHours)) : suggestedHours;
   }
   function gamingSubtotal(){ return Math.round(currentHours()*rate); }
+  function alreadyAdded(){ return pendingItems.filter(pi=>pi.sessionId===s.id); }
+  function pendingSubtotal(){ return alreadyAdded().reduce((sum,pi)=>sum+pi.qty*pi.sellPrice,0); }
   function cartSubtotal(){ return cart.reduce((sum,c)=>sum+c.qty*c.sellPrice,0); }
-  function grandTotal(){ return gamingSubtotal() + cartSubtotal(); }
+  function grandTotal(){ return gamingSubtotal() + pendingSubtotal() + cartSubtotal(); }
 
   function render(){
     const total = grandTotal();
+    const already = alreadyAdded();
     const availableProducts = products.filter(p=>p.stock>0);
     root.innerHTML = `
       <div class="overlay" id="ovCheckout">
@@ -564,9 +595,15 @@ function openCheckoutModal(id){
           <label>Billable hours</label>
           <input type="number" id="hoursInput" step="0.25" min="0.25" value="${currentHours()}">
           <div class="hint">Gaming subtotal: <b class="mono" id="gamingSubHint">${money(gamingSubtotal())}</b></div>
+          ${already.length ? `
+          <div class="divider"></div>
+          <label>Already added this session</label>
+          <div>${already.map(pi=>'<div class="free-row"><span>'+pi.qty+'× '+pi.name+' <span class="mono">('+money(pi.qty*pi.sellPrice)+')</span></span></div>').join('')}</div>
+          <div class="hint">Added-so-far subtotal: <b class="mono">${money(pendingSubtotal())}</b> · manage these from the session card if something needs correcting</div>
+          ` : ''}
           ${availableProducts.length ? `
           <div class="divider"></div>
-          <label>Add snacks / drinks (optional)</label>
+          <label>Add anything else now (optional)</label>
           <div class="split-row">
             <div style="flex:2;">
               <select id="cartProductSelect">
@@ -582,7 +619,7 @@ function openCheckoutModal(id){
           ${cart.length ? `<div style="margin-top:10px;">${cart.map((c,idx)=>
             '<div class="free-row"><span>'+c.qty+'× '+c.name+' <span class="mono">('+money(c.qty*c.sellPrice)+')</span></span><button class="btn-mini" data-remove-cart="'+idx+'" style="color:var(--danger)">Remove</button></div>'
           ).join('')}</div>
-          <div class="hint">Snacks subtotal: <b class="mono">${money(cartSubtotal())}</b></div>` : ''}
+          <div class="hint">Just-added subtotal: <b class="mono">${money(cartSubtotal())}</b></div>` : ''}
           ` : ''}
           <div class="divider"></div>
           <label>Mode of payment</label>
@@ -599,7 +636,7 @@ function openCheckoutModal(id){
             <div class="hint">Edit either amount — the other adjusts to keep the total right.</div>
           </div>
           <div class="stat" style="margin-top:14px;">
-            <div class="label">Total bill${cart.length?' (gaming + snacks)':''}</div>
+            <div class="label">Total bill${(already.length||cart.length)?' (gaming + snacks)':''}</div>
             <div class="value gold mono" id="totalPreview">${money(total)}</div>
           </div>
           <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
@@ -722,6 +759,54 @@ function openCancelConfirm(id){
 }
 
 function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+function openAddItemModal(sessionId){
+  const availableProducts = products.filter(p=>p.stock>0);
+  let selectedId = availableProducts.length ? availableProducts[0].id : '';
+  let qty = 1;
+  const root = document.getElementById('modal-root');
+
+  function render(){
+    root.innerHTML = `
+      <div class="overlay" id="ovAddItem">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3>Add to bill</h3>
+          ${availableProducts.length ? `
+          <label>Product</label>
+          <select id="aiProductSelect">
+            ${availableProducts.map(p=>'<option value="'+p.id+'"'+(selectedId===p.id?' selected':'')+'>'+p.name+' — '+money(p.sellPrice)+' ('+p.stock+' left)</option>').join('')}
+          </select>
+          <label>Quantity</label>
+          <div class="stepper"><button type="button" id="aiQtyDec">−</button><div class="n mono">${qty}</div><button type="button" id="aiQtyInc">+</button></div>
+          <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmAddItem">Add to bill</button></div>
+          ` : `<div class="empty">Nothing in stock to add — check the Shop tab.</div>`}
+          <div class="err-text" id="addItemErr"></div>
+        </div>
+      </div>`;
+    const sel = document.getElementById('aiProductSelect');
+    if(sel) sel.addEventListener('change', e=>{ selectedId = e.target.value; });
+    const qDec = document.getElementById('aiQtyDec'), qInc = document.getElementById('aiQtyInc');
+    if(qDec) qDec.addEventListener('click', ()=>{ if(qty>1){ qty--; render(); }});
+    if(qInc) qInc.addEventListener('click', ()=>{ qty++; render(); });
+    const confirmBtn = document.getElementById('confirmAddItem');
+    if(confirmBtn) confirmBtn.addEventListener('click', async function(){
+      if(!selectedId) return;
+      const restore = setButtonBusy(this, 'Adding…');
+      try{
+        const data = await apiPost('addPendingItem', { id: uid(), sessionId, productId: selectedId, qty });
+        applyState(data);
+        syncOk(); closeModal(); renderActiveTab();
+      }catch(e){
+        syncFail(e); restore();
+        showInlineError('addItemErr', "Couldn't save — check your connection and try again.");
+      }
+    });
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovAddItem').addEventListener('click', e=>{ if(e.target.id==='ovAddItem') closeModal(); });
+  }
+  render();
+}
 
 // ---------- SHOP TAB ----------
 let showAddProduct = false;
