@@ -52,9 +52,11 @@
   .session-card.glow-pc{animation:glowPc 3.4s ease-in-out infinite;}
   .session-card.glow-xsx{animation:glowXsx 3.4s ease-in-out infinite;}
   .session-card.glow-xox{animation:glowXox 3.4s ease-in-out infinite;}
+  .session-card.glow-ps5{animation:glowPs5 3.4s ease-in-out infinite;}
   @keyframes glowPc{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(155,123,255,.3),0 0 18px rgba(155,123,255,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(155,123,255,.55),0 0 32px rgba(155,123,255,.32);}}
   @keyframes glowXsx{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(95,211,74,.3),0 0 18px rgba(95,211,74,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(95,211,74,.55),0 0 32px rgba(95,211,74,.32);}}
-  @keyframes glowXox{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.3),0 0 18px rgba(47,168,232,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.55),0 0 32px rgba(47,168,232,.32);}}
+  @keyframes glowXox{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(242,169,59,.3),0 0 18px rgba(242,169,59,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(242,169,59,.55),0 0 32px rgba(242,169,59,.32);}}
+  @keyframes glowPs5{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.3),0 0 18px rgba(47,168,232,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.55),0 0 32px rgba(47,168,232,.32);}}
   .session-top{height:4px;}
   .session-body{padding:14px;}
   .session-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
@@ -221,7 +223,8 @@ async function apiPost(action, payload){
 const SYSTEMS = {
   pc:  { name:'Gaming PC',       short:'PC',  color:'#9B7BFF', max:2, rates:{1:120,2:100} },
   xsx: { name:'Xbox Series X',   short:'XSX', color:'#5FD34A', max:4, rates:{1:110,2:100,3:80,4:70} },
-  xox: { name:'Xbox One X',      short:'XOX', color:'#2FA8E8', max:4, rates:{1:90,2:80,3:70,4:60} },
+  xox: { name:'Xbox One X',      short:'XOX', color:'#F2A93B', max:4, rates:{1:110,2:100,3:80,4:70} },
+  ps5: { name:'PS5',             short:'PS5', color:'#2FA8E8', max:4, rates:{1:120,2:110,3:100,4:90} },
 };
 const SYS_KEYS = Object.keys(SYSTEMS);
 const PRODUCT_CATEGORIES = { snack:'Snack', drink:'Drink', other:'Other' };
@@ -241,7 +244,11 @@ let newSessionCustomStart = null;
 let lastSyncTime = null;
 let syncFailStreak = 0;
 
-function hourlyRate(sysKey, players){ return SYSTEMS[sysKey].rates[players] * players; }
+function hourlyRate(sysKey, players){
+  const sys = SYSTEMS[sysKey];
+  if(!sys || !sys.rates[players]) return 0;
+  return sys.rates[players] * players;
+}
 function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
 function paymentCell(h){
   if(h.payment==='split'){
@@ -409,12 +416,18 @@ document.getElementById('tabs').addEventListener('click', e=>{
   renderCurrentTab();
 });
 function renderCurrentTab(){
-  if(currentTab==='active') renderActiveTab();
-  else if(currentTab==='shop') renderShopTab();
-  else if(currentTab==='expenses') renderExpensesTab();
-  else if(currentTab==='daily') renderDailyTab();
-  else if(currentTab==='monthly') renderMonthlyTab();
-  else renderHistoryTab();
+  try{
+    if(currentTab==='active') renderActiveTab();
+    else if(currentTab==='shop') renderShopTab();
+    else if(currentTab==='expenses') renderExpensesTab();
+    else if(currentTab==='daily') renderDailyTab();
+    else if(currentTab==='monthly') renderMonthlyTab();
+    else renderHistoryTab();
+  }catch(e){
+    console.error('render failed for tab', currentTab, e);
+    const el = document.getElementById('tab-'+currentTab);
+    if(el) el.innerHTML = '<div class="card empty">Something went wrong showing this tab. Try switching tabs and back, or reload the page.</div>';
+  }
 }
 
 // ---------- ACTIVE TAB ----------
@@ -434,6 +447,15 @@ function renderActiveTab(){
   } else {
     activeSessions.slice().sort((a,b)=>b.start-a.start).forEach(s=>{
       const sys = SYSTEMS[s.sys];
+      if(!sys){
+        html += '<div class="session-card">';
+        html += '<div class="session-body">';
+        html += '<div class="session-head"><div class="sys" style="color:var(--danger)">Unrecognized entry</div></div>';
+        html += '<div class="hint">This session doesn\'t match a known console (system: "'+(s.sys||'blank')+'") — likely a leftover row. Cancel it to clear it out; it won\'t be billed.</div>';
+        html += '<div class="btn-row" style="margin-top:10px;"><button class="action btn-danger" data-cancel="'+s.id+'" style="width:100%">Cancel this entry</button></div>';
+        html += '</div></div>';
+        return;
+      }
       const rate = hourlyRate(s.sys, s.players);
       html += '<div class="session-card glow-'+s.sys+'">';
       html += '<div class="session-top" style="background:'+sys.color+'"></div>';
@@ -561,6 +583,7 @@ function openCheckoutModal(id){
   const s = activeSessions.find(x=>x.id===id);
   if(!s) return;
   const sys = SYSTEMS[s.sys];
+  if(!sys) return; // unrecognized system — only Cancel is offered for these on the card
   const rate = hourlyRate(s.sys, s.players);
   const elapsedMin = (Date.now()-s.start)/60000;
   const billableMin = Math.max(0, elapsedMin - (s.freeMin||0));
@@ -1783,7 +1806,7 @@ function showSetupBanner(){
 (async function init(){
   if(!isConfigured()){ showSetupBanner(); return; }
   await initialLoad();
-  renderActiveTab();
+  try{ renderActiveTab(); }catch(e){ console.error('initial render failed', e); }
   tickClock();
   setInterval(tickClock, 1000);
   setInterval(pollState, 6000);
