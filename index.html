@@ -171,6 +171,7 @@
   <nav class="tabs" id="tabs">
     <button data-tab="active" class="active">Live</button>
     <button data-tab="shop">Shop</button>
+    <button data-tab="members">Members</button>
     <button data-tab="expenses">Expenses</button>
     <button data-tab="daily">Today</button>
     <button data-tab="monthly">Month</button>
@@ -180,6 +181,7 @@
   <main>
     <section id="tab-active"></section>
     <section id="tab-shop" hidden></section>
+    <section id="tab-members" hidden></section>
     <section id="tab-expenses" hidden></section>
     <section id="tab-daily" hidden></section>
     <section id="tab-monthly" hidden></section>
@@ -189,10 +191,6 @@
 <div id="modal-root"></div>
 
 <script>
-// ======================================================================
-// 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
-//    See gamezone-backend.gs for the script and setup steps.
-// ======================================================================
 const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
 
 function isConfigured(){
@@ -237,12 +235,27 @@ let products = [];
 let sales = [];
 let expenses = [];
 let pendingItems = [];
+let members = [];
+let membershipPayments = [];
 let currentTab = 'active';
 let newSessionSys = null;
 let newSessionPlayers = 1;
 let newSessionCustomStart = null;
+let newSessionMemberId = null;
+let newSessionMemberName = null;
 let lastSyncTime = null;
 let syncFailStreak = 0;
+
+function hoursRemaining(m){ return Math.round(((Number(m.hoursTotal)||0) - (Number(m.hoursUsed)||0)) * 100) / 100; }
+function fmtHours(h){
+  const sign = h<0 ? '-' : '';
+  h = Math.abs(h);
+  const hrs = Math.floor(h);
+  const mins = Math.round((h-hrs)*60);
+  if(mins===60) return sign+(hrs+1)+'h 0m';
+  return sign+hrs+'h '+mins+'m';
+}
+function membersWithHoursLeft(){ return members.filter(m=>hoursRemaining(m)>0); }
 
 function hourlyRate(sysKey, players){
   const sys = SYSTEMS[sysKey];
@@ -251,6 +264,9 @@ function hourlyRate(sysKey, players){
 }
 function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
 function paymentCell(h){
+  if(h.payment==='membership'){
+    return '🎫 Membership'+(h.memberName?'<div class="hint" style="margin:0;">'+h.memberName+'</div>':'');
+  }
   if(h.payment==='split'){
     return 'Split<div class="hint" style="margin:0;">₹'+Math.round(h.cashAmount||0)+'c+₹'+Math.round(h.onlineAmount||0)+'o</div>';
   }
@@ -329,6 +345,7 @@ function applyState(data){
   activeSessions = data.activeSessions; history = data.history;
   products = data.products||[]; sales = data.sales||[]; expenses = data.expenses||[];
   pendingItems = data.pendingItems||[];
+  members = data.members||[]; membershipPayments = data.membershipPayments||[];
 }
 
 async function initialLoad(){
@@ -346,7 +363,9 @@ async function pollState(){
       JSON.stringify(data.products)!==JSON.stringify(products) ||
       JSON.stringify(data.sales)!==JSON.stringify(sales) ||
       JSON.stringify(data.expenses)!==JSON.stringify(expenses) ||
-      JSON.stringify(data.pendingItems)!==JSON.stringify(pendingItems);
+      JSON.stringify(data.pendingItems)!==JSON.stringify(pendingItems) ||
+      JSON.stringify(data.members)!==JSON.stringify(members) ||
+      JSON.stringify(data.membershipPayments)!==JSON.stringify(membershipPayments);
     if(changed){
       applyState(data);
       // Don't blow away a form the person is actively typing into — the
@@ -398,9 +417,21 @@ function updateLiveMetrics(){
     const h = Math.floor(elapsedMs/3600000), m = Math.floor((elapsedMs%3600000)/60000), s=Math.floor((elapsedMs%60000)/1000);
     const timerEl = el.querySelector('.timer-val');
     if(timerEl) timerEl.textContent = pad(h)+':'+pad(m)+':'+pad(s);
-    const bill = (billableMs/3600000) * rate;
     const billEl = el.querySelector('.bill-val');
-    if(billEl) billEl.textContent = money(bill);
+    const memberHoursAttr = el.getAttribute('data-live-member-hours');
+    if(memberHoursAttr !== null){
+      // Membership session: count the plan's remaining hours down live,
+      // rather than showing a money amount — nothing is being charged.
+      const remainingAtStart = parseFloat(memberHoursAttr);
+      const remainingNow = remainingAtStart - (billableMs/3600000);
+      if(billEl){
+        billEl.textContent = fmtHours(remainingNow);
+        billEl.style.color = remainingNow < 0 ? 'var(--danger)' : '';
+      }
+    } else if(billEl){
+      const bill = (billableMs/3600000) * rate;
+      billEl.textContent = money(bill);
+    }
   });
 }
 
@@ -410,7 +441,7 @@ document.getElementById('tabs').addEventListener('click', e=>{
   if(!btn) return;
   currentTab = btn.getAttribute('data-tab');
   document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active', b===btn));
-  ['active','shop','expenses','daily','monthly','history'].forEach(t=>{
+  ['active','shop','members','expenses','daily','monthly','history'].forEach(t=>{
     document.getElementById('tab-'+t).hidden = (t!==currentTab);
   });
   renderCurrentTab();
@@ -419,6 +450,7 @@ function renderCurrentTab(){
   try{
     if(currentTab==='active') renderActiveTab();
     else if(currentTab==='shop') renderShopTab();
+    else if(currentTab==='members') renderMembersTab();
     else if(currentTab==='expenses') renderExpensesTab();
     else if(currentTab==='daily') renderDailyTab();
     else if(currentTab==='monthly') renderMonthlyTab();
@@ -457,14 +489,22 @@ function renderActiveTab(){
         return;
       }
       const rate = hourlyRate(s.sys, s.players);
+      const isMembership = !!s.memberId;
+      const member = isMembership ? members.find(m=>m.id===s.memberId) : null;
+      const memberRemainingAtStart = member ? hoursRemaining(member) : 0;
       html += '<div class="session-card glow-'+s.sys+'">';
       html += '<div class="session-top" style="background:'+sys.color+'"></div>';
-      html += '<div class="session-body" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+rate+'">';
-      html += '<div class="session-head"><div class="sys" style="color:'+sys.color+'">'+sys.name+'<span class="badge">'+s.players+' player'+(s.players>1?'s':'')+'</span></div><div class="hint mono">from '+fmtTime(s.start)+'</div></div>';
+      html += '<div class="session-body" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+rate+'"'+(isMembership?(' data-live-member-hours="'+memberRemainingAtStart+'"'):'')+'>';
+      html += '<div class="session-head"><div class="sys" style="color:'+sys.color+'">'+sys.name+'<span class="badge">'+s.players+' player'+(s.players>1?'s':'')+'</span>'+(isMembership?'<span class="badge" style="color:var(--gold);border-color:var(--gold);">🎫 '+(s.memberName||'Member')+'</span>':'')+'</div><div class="hint mono">from '+fmtTime(s.start)+'</div></div>';
       html += '<div class="session-metrics">';
       html += '<div class="metric"><div class="l"><span class="live-dot"></span>Elapsed</div><div class="v timer-val mono">00:00:00</div></div>';
-      html += '<div class="metric"><div class="l">Live bill</div><div class="v gold bill-val mono">'+money(0)+'</div></div>';
-      html += '<div class="metric"><div class="l">Rate/hr</div><div class="v mono">'+money(rate)+'</div></div>';
+      if(isMembership){
+        html += '<div class="metric"><div class="l">Plan hrs left</div><div class="v gold bill-val mono">'+fmtHours(memberRemainingAtStart)+'</div></div>';
+        html += '<div class="metric"><div class="l">Billing</div><div class="v mono" style="font-size:14px;">Membership</div></div>';
+      } else {
+        html += '<div class="metric"><div class="l">Live bill</div><div class="v gold bill-val mono">'+money(0)+'</div></div>';
+        html += '<div class="metric"><div class="l">Rate/hr</div><div class="v mono">'+money(rate)+'</div></div>';
+      }
       html += '</div>';
       html += '<div class="free-row"><span>Free/comp time given: <b class="mono">'+(s.freeMin||0)+' min</b></span><button class="btn-mini" data-add-free="'+s.id+'">+15 min free</button></div>';
       const sessionItems = pendingItems.filter(pi=>pi.sessionId===s.id);
@@ -503,10 +543,31 @@ function renderActiveTab(){
     if(newSessionPlayers > sys.max) newSessionPlayers = sys.max;
     html += '<label>Players</label>';
     html += '<div class="stepper"><button data-players-dec>−</button><div class="n mono">'+newSessionPlayers+'</div><button data-players-inc>+</button></div>';
-    html += '<div class="hint">Rate: '+money(sys.rates[newSessionPlayers])+' / player / hr &nbsp;·&nbsp; Total: <b class="mono">'+money(hourlyRate(newSessionSys,newSessionPlayers))+'/hr</b></div>';
+    html += '<label>Billing</label>';
+    html += '<div class="pay-toggle">';
+    html += '<button data-session-type="walkin" class="'+(!newSessionMemberId?'selected':'')+'">Pay per hour</button>';
+    html += '<button data-session-type="member" class="'+(newSessionMemberId?'selected':'')+'">Membership</button>';
+    html += '</div>';
+    if(newSessionMemberId){
+      const eligible = membersWithHoursLeft();
+      if(eligible.length===0){
+        html += '<div class="hint" style="color:var(--danger);">No members with hours left. Add or top up one from the Members tab.</div>';
+      } else {
+        html += '<select id="memberSelect">';
+        eligible.forEach(m=>{
+          html += '<option value="'+m.id+'"'+(newSessionMemberId===m.id?' selected':'')+'>'+m.name+' — '+fmtHours(hoursRemaining(m))+' left</option>';
+        });
+        html += '</select>';
+        const chosen = eligible.find(m=>m.id===newSessionMemberId) || eligible[0];
+        html += '<div class="hint">Hours will be deducted from this membership at checkout, not charged. <b class="mono">'+fmtHours(hoursRemaining(chosen))+'</b> currently remaining.</div>';
+      }
+    } else {
+      html += '<div class="hint">Rate: '+money(sys.rates[newSessionPlayers])+' / player / hr &nbsp;·&nbsp; Total: <b class="mono">'+money(hourlyRate(newSessionSys,newSessionPlayers))+'/hr</b></div>';
+    }
     html += '<label>Start time</label>';
     html += '<input type="datetime-local" id="startTimeInput" value="'+toLocalInputValue(newSessionCustomStart||Date.now())+'">';
-    html += '<div style="margin-top:14px;"><button class="action btn-primary" id="startSessionBtn" style="width:100%">Start session</button></div>';
+    const blockStart = newSessionMemberId && membersWithHoursLeft().length===0;
+    html += '<div style="margin-top:14px;"><button class="action btn-primary" id="startSessionBtn" style="width:100%" '+(blockStart?'disabled':'')+'>Start session</button></div>';
     html += '<div class="err-text" id="startErr"></div>';
   }
   html += '</div>';
@@ -522,12 +583,30 @@ function attachActiveHandlers(){
     if(activeSessions.some(s=>s.sys===k)) return;
     newSessionSys = (newSessionSys===k) ? null : k;
     newSessionPlayers = 1;
+    newSessionMemberId = null; newSessionMemberName = null;
     renderActiveTab();
   }));
   const dec = document.querySelector('[data-players-dec]');
   const inc = document.querySelector('[data-players-inc]');
   if(dec) dec.addEventListener('click', ()=>{ if(newSessionPlayers>1){ newSessionPlayers--; renderActiveTab(); }});
   if(inc) inc.addEventListener('click', ()=>{ const max=SYSTEMS[newSessionSys].max; if(newSessionPlayers<max){ newSessionPlayers++; renderActiveTab(); }});
+  document.querySelectorAll('[data-session-type]').forEach(b=>b.addEventListener('click', ()=>{
+    const type = b.getAttribute('data-session-type');
+    if(type==='walkin'){ newSessionMemberId = null; newSessionMemberName = null; }
+    else {
+      const eligible = membersWithHoursLeft();
+      if(eligible.length){ newSessionMemberId = eligible[0].id; newSessionMemberName = eligible[0].name; }
+      else { newSessionMemberId = 'pending'; newSessionMemberName = null; } // shows the "no members" hint
+    }
+    renderActiveTab();
+  }));
+  const memberSelect = document.getElementById('memberSelect');
+  if(memberSelect) memberSelect.addEventListener('change', e=>{
+    newSessionMemberId = e.target.value;
+    const m = members.find(x=>x.id===newSessionMemberId);
+    newSessionMemberName = m ? m.name : null;
+    renderActiveTab();
+  });
   const startBtn = document.getElementById('startSessionBtn');
   if(startBtn) startBtn.addEventListener('click', startSession);
   const startInput = document.getElementById('startTimeInput');
@@ -566,11 +645,16 @@ async function startSession(){
   const btn = document.getElementById('startSessionBtn');
   const restore = setButtonBusy(btn, 'Starting…');
   const start = newSessionCustomStart || Date.now();
+  const isMembership = !!(newSessionMemberId && newSessionMemberId!=='pending');
   try{
-    const data = await apiPost('startSession', { id: uid(), sys: newSessionSys, players: newSessionPlayers, start, freeMin: 0 });
+    const data = await apiPost('startSession', {
+      id: uid(), sys: newSessionSys, players: newSessionPlayers, start, freeMin: 0,
+      memberId: isMembership ? newSessionMemberId : '', memberName: isMembership ? newSessionMemberName : ''
+    });
     applyState(data);
     syncOk();
     newSessionSys = null; newSessionPlayers = 1; newSessionCustomStart = null;
+    newSessionMemberId = null; newSessionMemberName = null;
     renderActiveTab();
   }catch(e){
     syncFail(e); restore();
@@ -585,6 +669,9 @@ function openCheckoutModal(id){
   const sys = SYSTEMS[s.sys];
   if(!sys) return; // unrecognized system — only Cancel is offered for these on the card
   const rate = hourlyRate(s.sys, s.players);
+  const isMembership = !!s.memberId;
+  const member = isMembership ? members.find(m=>m.id===s.memberId) : null;
+  const memberRemaining = member ? hoursRemaining(member) : 0;
   const elapsedMin = (Date.now()-s.start)/60000;
   const billableMin = Math.max(0, elapsedMin - (s.freeMin||0));
   const suggestedHours = Math.max(0.25, Math.ceil(billableMin/15)*15/60);
@@ -599,25 +686,34 @@ function openCheckoutModal(id){
     const el = document.getElementById('hoursInput');
     return el ? Math.max(0.25, parseFloat(el.value||suggestedHours)) : suggestedHours;
   }
-  function gamingSubtotal(){ return Math.round(currentHours()*rate); }
+  function gamingSubtotal(){ return isMembership ? 0 : Math.round(currentHours()*rate); }
   function alreadyAdded(){ return pendingItems.filter(pi=>pi.sessionId===s.id); }
   function pendingSubtotal(){ return alreadyAdded().reduce((sum,pi)=>sum+pi.qty*pi.sellPrice,0); }
   function cartSubtotal(){ return cart.reduce((sum,c)=>sum+c.qty*c.sellPrice,0); }
   function grandTotal(){ return gamingSubtotal() + pendingSubtotal() + cartSubtotal(); }
+  function hasExtras(){ return alreadyAdded().length>0 || cart.length>0; }
 
   function render(){
     const total = grandTotal();
     const already = alreadyAdded();
     const availableProducts = products.filter(p=>p.stock>0);
+    const afterHours = memberRemaining - currentHours();
     root.innerHTML = `
       <div class="overlay" id="ovCheckout">
         <div class="sheet">
           <button class="close-x" data-close>✕</button>
           <h3 style="color:${sys.color}">Checkout · ${sys.name}</h3>
+          ${isMembership ? `
+          <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · 🎫 Membership: <b>${s.memberName||'Member'}</b>${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
+          <label>Hours to deduct from membership</label>
+          <input type="number" id="hoursInput" step="0.25" min="0.25" value="${currentHours()}">
+          <div class="hint">Member has <b class="mono">${fmtHours(memberRemaining)}</b> remaining now — <b class="mono" id="gamingSubHint" style="${afterHours<0?'color:var(--danger);':''}">${fmtHours(afterHours)}</b> left after this session.${afterHours<0?' This goes over their plan — you can still continue, or reduce the hours, or top them up first from the Members tab.':''}</div>
+          ` : `
           <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · rate ${money(rate)}/hr${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
           <label>Billable hours</label>
           <input type="number" id="hoursInput" step="0.25" min="0.25" value="${currentHours()}">
           <div class="hint">Gaming subtotal: <b class="mono" id="gamingSubHint">${money(gamingSubtotal())}</b></div>
+          `}
           ${already.length ? `
           <div class="divider"></div>
           <label>Already added this session</label>
@@ -645,7 +741,10 @@ function openCheckoutModal(id){
           <div class="hint">Just-added subtotal: <b class="mono">${money(cartSubtotal())}</b></div>` : ''}
           ` : ''}
           <div class="divider"></div>
-          <label>Mode of payment</label>
+          ${(isMembership && !hasExtras()) ? `
+          <div class="hint">No snacks added — nothing to pay here, this is fully covered by the membership.</div>
+          ` : `
+          <label>Mode of payment${isMembership?' (for the snacks added)':''}</label>
           <div class="pay-toggle">
             <button data-pay="cash" class="${payment==='cash'?'selected':''}">Cash</button>
             <button data-pay="online" class="${payment==='online'?'selected':''}">Online</button>
@@ -658,8 +757,9 @@ function openCheckoutModal(id){
             </div>
             <div class="hint">Edit either amount — the other adjusts to keep the total right.</div>
           </div>
+          `}
           <div class="stat" style="margin-top:14px;">
-            <div class="label">Total bill${(already.length||cart.length)?' (gaming + snacks)':''}</div>
+            <div class="label">Total bill${isMembership?(hasExtras()?' (snacks only — gaming via membership)':' (covered by membership)'):((already.length||cart.length)?' (gaming + snacks)':'')}</div>
             <div class="value gold mono" id="totalPreview">${money(total)}</div>
           </div>
           <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
@@ -671,7 +771,16 @@ function openCheckoutModal(id){
 
   function refreshTotals(){
     const t = grandTotal();
-    const gh = document.getElementById('gamingSubHint'); if(gh) gh.textContent = money(gamingSubtotal());
+    const gh = document.getElementById('gamingSubHint');
+    if(gh){
+      if(isMembership){
+        const after = memberRemaining - currentHours();
+        gh.textContent = fmtHours(after);
+        gh.style.color = after<0 ? 'var(--danger)' : '';
+      } else {
+        gh.textContent = money(gamingSubtotal());
+      }
+    }
     const tp = document.getElementById('totalPreview'); if(tp) tp.textContent = money(t);
     if(payment==='split'){
       const ci = document.getElementById('cashAmountInput'), oi = document.getElementById('onlineAmountInput');
@@ -723,13 +832,18 @@ function openCheckoutModal(id){
 
     document.getElementById('confirmCheckout').addEventListener('click', async function(){
       const hours = currentHours();
-      const total = grandTotal();
+      const total = isMembership ? (pendingSubtotal()+cartSubtotal()) : grandTotal();
       let cashAmount, onlineAmount;
-      if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
-      else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
-      else {
-        cashAmount = Math.round(parseFloat(document.getElementById('cashAmountInput').value||0));
-        onlineAmount = Math.round(parseFloat(document.getElementById('onlineAmountInput').value||0));
+      if(!isMembership || hasExtras()){
+        if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
+        else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
+        else {
+          cashAmount = Math.round(parseFloat(document.getElementById('cashAmountInput').value||0));
+          onlineAmount = Math.round(parseFloat(document.getElementById('onlineAmountInput').value||0));
+        }
+      } else { cashAmount = 0; onlineAmount = 0; }
+      if(isMembership && (memberRemaining - hours) < 0){
+        if(!confirm('This uses more hours than '+(s.memberName||'the member')+' has left on their plan ('+fmtHours(memberRemaining)+' remaining). Continue anyway?')) return;
       }
       const restore = setButtonBusy(this, 'Saving…');
       try{
@@ -829,6 +943,315 @@ function openAddItemModal(sessionId){
     document.getElementById('ovAddItem').addEventListener('click', e=>{ if(e.target.id==='ovAddItem') closeModal(); });
   }
   render();
+}
+
+// ---------- MEMBERS TAB ----------
+function membersSorted(){
+  return members.slice().sort((a,b)=> hoursRemaining(b)-hoursRemaining(a) || a.name.localeCompare(b.name));
+}
+function memberStatusBadge(m){
+  const rem = hoursRemaining(m);
+  if(rem<=0) return '<span class="badge" style="color:var(--danger);border-color:#4a2222;">Exhausted</span>';
+  return '<span class="badge" style="color:var(--ok);border-color:rgba(62,207,142,.3);">Active</span>';
+}
+
+function renderMembersTab(){
+  const el = document.getElementById('tab-members');
+  const withHours = members.filter(m=>hoursRemaining(m)>0);
+  const totalHoursLeft = members.reduce((s,m)=>s+Math.max(0,hoursRemaining(m)),0);
+  const totalRevenue = membershipPayments.reduce((s,p)=>s+Number(p.amount||0),0);
+
+  let html = '';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Members</div><div class="value mono">'+members.length+'</div></div>';
+  html += '<div class="stat"><div class="label">Active plans</div><div class="value mono">'+withHours.length+'</div></div>';
+  html += '<div class="stat"><div class="label">Hrs left (all)</div><div class="value gold mono">'+fmtHours(totalHoursLeft)+'</div></div>';
+  html += '</div>';
+  html += '<div class="hint" style="margin:-6px 0 12px 2px;">Lifetime membership revenue: <b class="mono">'+money(totalRevenue)+'</b></div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Members ('+members.length+')</div>';
+  if(members.length===0){
+    html += '<div class="empty">No members yet — add one below when a customer buys a membership.</div>';
+  } else {
+    membersSorted().forEach(m=>{
+      const rem = hoursRemaining(m);
+      html += '<div class="card" style="margin-bottom:8px;background:var(--panel2);">';
+      html += '<div class="session-head" style="margin-bottom:8px;"><div class="sys" style="font-size:16px;">'+m.name+' '+memberStatusBadge(m)+'</div></div>';
+      if(m.phone) html += '<div class="hint" style="margin-top:-6px;">'+m.phone+'</div>';
+      html += '<div class="session-metrics">';
+      html += '<div class="metric"><div class="l">Hrs left</div><div class="v mono '+(rem<=0?'':'gold')+'">'+fmtHours(rem)+'</div></div>';
+      html += '<div class="metric"><div class="l">Plan total</div><div class="v mono">'+fmtHours(m.hoursTotal)+'</div></div>';
+      html += '<div class="metric"><div class="l">Paid</div><div class="v mono">'+money(m.amountPaid)+'</div></div>';
+      html += '</div>';
+      html += '<div class="hint">Used '+fmtHours(m.hoursUsed)+' so far · joined '+(m.date?fmtDateShort(Date.parse(m.date)):'')+(m.notes?' · '+m.notes:'')+'</div>';
+      html += '<div class="btn-row" style="margin-top:10px;">';
+      html += '<button class="action btn-primary" data-topup="'+m.id+'">Top up</button>';
+      html += '<button class="action btn-ghost" data-edit-member="'+m.id+'">Edit</button>';
+      html += '<button class="action btn-danger" data-del-member="'+m.id+'">Del</button>';
+      html += '</div></div>';
+    });
+  }
+  html += '<div style="margin-top:4px;"><button class="action btn-ghost" id="toggleAddMember" style="width:100%">+ Add member</button></div>';
+  html += '</div>';
+
+  html += '<div class="card">';
+  html += '<div class="section-title">Recent membership payments</div>';
+  const recent = membershipPayments.slice().sort((a,b)=>b.timestamp-a.timestamp).slice(0,10);
+  if(recent.length===0){
+    html += '<div class="empty">No membership payments logged yet.</div>';
+  } else {
+    html += '<table><tr><th>Date</th><th>Member</th><th>Type</th><th>Hrs</th><th>Amount</th><th>Pay</th></tr>';
+    recent.forEach(p=>{
+      html += '<tr><td class="mono">'+fmtTime(p.timestamp)+'</td><td>'+p.memberName+'</td><td class="hint" style="margin:0;">'+(p.type==='new'?'New':'Top up')+'</td><td class="mono">'+fmtHours(p.hours)+'</td><td class="mono">'+money(p.amount)+'</td><td>'+paymentCell(p)+'</td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '<div style="margin-top:8px;"><a href="#" class="export" id="exportMemberships">Export all as CSV ↓</a></div>';
+  html += '</div>';
+
+  el.innerHTML = html;
+  attachMembersHandlers();
+}
+
+function attachMembersHandlers(){
+  const toggleBtn = document.getElementById('toggleAddMember');
+  if(toggleBtn) toggleBtn.addEventListener('click', openAddMemberModal);
+  document.querySelectorAll('[data-topup]').forEach(b=>b.addEventListener('click', ()=>openTopUpModal(b.getAttribute('data-topup'))));
+  document.querySelectorAll('[data-edit-member]').forEach(b=>b.addEventListener('click', ()=>openEditMemberModal(b.getAttribute('data-edit-member'))));
+  document.querySelectorAll('[data-del-member]').forEach(b=>b.addEventListener('click', ()=>openDeleteMemberConfirm(b.getAttribute('data-del-member'))));
+  const exportLink = document.getElementById('exportMemberships');
+  if(exportLink) exportLink.addEventListener('click', e=>{ e.preventDefault(); exportMembershipsCsv(); });
+}
+
+function payToggleHtml(name, payment){
+  return '<div class="pay-toggle">'
+    + '<button data-'+name+'="cash" class="'+(payment==='cash'?'selected':'')+'">Cash</button>'
+    + '<button data-'+name+'="online" class="'+(payment==='online'?'selected':'')+'">Online</button>'
+    + '<button data-'+name+'="split" class="'+(payment==='split'?'selected':'')+'">Split</button>'
+    + '</div>';
+}
+
+function openAddMemberModal(){
+  let payment = 'cash';
+  const root = document.getElementById('modal-root');
+  function amount(){ return parseFloat(document.getElementById('nmAmount')?.value||0)||0; }
+  function render(){
+    const amt = amount();
+    root.innerHTML = `
+      <div class="overlay" id="ovAddMember">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3>New member</h3>
+          <label>Name</label><input type="text" id="nmName" placeholder="e.g. Rohan Sharma">
+          <label>Phone (optional)</label><input type="text" id="nmPhone" placeholder="e.g. 98765 43210">
+          <div class="split-row">
+            <div><label>Hours purchased</label><input type="number" id="nmHours" min="0.25" step="0.25" value="10"></div>
+            <div><label>Amount paid</label><input type="number" id="nmAmount" min="0" step="1" value="0"></div>
+          </div>
+          <label>Mode of payment</label>
+          ${payToggleHtml('nmpay', payment)}
+          <div id="nmSplitRow" style="display:${payment==='split'?'block':'none'};">
+            <div class="split-row">
+              <div><label>Cash</label><input type="number" id="nmCash" min="0" step="1" value="${amt}"></div>
+              <div><label>Online</label><input type="number" id="nmOnline" min="0" step="1" value="0"></div>
+            </div>
+          </div>
+          <label>Notes (optional)</label><input type="text" id="nmNotes" placeholder="e.g. 3-month plan">
+          <div style="margin-top:14px;"><button class="action btn-primary" style="width:100%" id="saveNewMember">Save member</button></div>
+          <div class="err-text" id="addMemberErr"></div>
+        </div>
+      </div>`;
+    document.querySelectorAll('[data-nmpay]').forEach(b=>b.addEventListener('click', ()=>{ payment=b.getAttribute('data-nmpay'); render(); }));
+    const nmAmount = document.getElementById('nmAmount');
+    const nmCash = document.getElementById('nmCash'), nmOnline = document.getElementById('nmOnline');
+    if(nmAmount) nmAmount.addEventListener('input', ()=>{ if(nmCash && nmOnline && payment==='split'){ nmCash.value = amount(); nmOnline.value = 0; }});
+    if(nmCash) nmCash.addEventListener('input', ()=>{
+      const t = amount();
+      const cash = Math.max(0, Math.min(t, parseFloat(nmCash.value||0)));
+      nmOnline.value = Math.round(t-cash);
+    });
+    if(nmOnline) nmOnline.addEventListener('input', ()=>{
+      const t = amount();
+      const online = Math.max(0, Math.min(t, parseFloat(nmOnline.value||0)));
+      nmCash.value = Math.round(t-online);
+    });
+    document.getElementById('saveNewMember').addEventListener('click', async function(){
+      const name = document.getElementById('nmName').value.trim();
+      const phone = document.getElementById('nmPhone').value.trim();
+      const hours = parseFloat(document.getElementById('nmHours').value||0);
+      const amt = amount();
+      const notes = document.getElementById('nmNotes').value.trim();
+      if(!name){ showInlineError('addMemberErr','Give the member a name.'); return; }
+      if(!hours || hours<=0){ showInlineError('addMemberErr','Enter the number of hours purchased.'); return; }
+      let cashAmount, onlineAmount;
+      if(payment==='cash'){ cashAmount=amt; onlineAmount=0; }
+      else if(payment==='online'){ cashAmount=0; onlineAmount=amt; }
+      else { cashAmount = Math.round(parseFloat(nmCash.value||0)); onlineAmount = Math.round(parseFloat(nmOnline.value||0)); }
+      const restore = setButtonBusy(this, 'Saving…');
+      try{
+        const data = await apiPost('addMember', { id: uid(), name, phone, hours, amount: amt, payment, cashAmount, onlineAmount, notes });
+        applyState(data);
+        syncOk(); closeModal(); renderMembersTab();
+      }catch(e){
+        syncFail(e); restore();
+        showInlineError('addMemberErr', "Couldn't save — check your connection and try again.");
+      }
+    });
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovAddMember').addEventListener('click', e=>{ if(e.target.id==='ovAddMember') closeModal(); });
+  }
+  render();
+}
+
+function openTopUpModal(memberId){
+  const m = members.find(x=>x.id===memberId);
+  if(!m) return;
+  let payment = 'cash';
+  const root = document.getElementById('modal-root');
+  function amount(){ return parseFloat(document.getElementById('tuAmount')?.value||0)||0; }
+  function render(){
+    const amt = amount();
+    root.innerHTML = `
+      <div class="overlay" id="ovTopUp">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3>Top up · ${m.name}</h3>
+          <div class="hint">Currently <b class="mono">${fmtHours(hoursRemaining(m))}</b> remaining of ${fmtHours(m.hoursTotal)} · ${money(m.amountPaid)} paid so far</div>
+          <div class="split-row">
+            <div><label>Add hours</label><input type="number" id="tuHours" min="0.25" step="0.25" value="10"></div>
+            <div><label>Amount paid</label><input type="number" id="tuAmount" min="0" step="1" value="0"></div>
+          </div>
+          <label>Mode of payment</label>
+          ${payToggleHtml('tupay', payment)}
+          <div id="tuSplitRow" style="display:${payment==='split'?'block':'none'};">
+            <div class="split-row">
+              <div><label>Cash</label><input type="number" id="tuCash" min="0" step="1" value="${amt}"></div>
+              <div><label>Online</label><input type="number" id="tuOnline" min="0" step="1" value="0"></div>
+            </div>
+          </div>
+          <div style="margin-top:14px;"><button class="action btn-primary" style="width:100%" id="confirmTopUp">Save top-up</button></div>
+          <div class="err-text" id="topUpErr"></div>
+        </div>
+      </div>`;
+    document.querySelectorAll('[data-tupay]').forEach(b=>b.addEventListener('click', ()=>{ payment=b.getAttribute('data-tupay'); render(); }));
+    const tuCash = document.getElementById('tuCash'), tuOnline = document.getElementById('tuOnline');
+    const tuAmount = document.getElementById('tuAmount');
+    if(tuAmount) tuAmount.addEventListener('input', ()=>{ if(tuCash && tuOnline && payment==='split'){ tuCash.value = amount(); tuOnline.value = 0; }});
+    if(tuCash) tuCash.addEventListener('input', ()=>{
+      const t = amount();
+      const cash = Math.max(0, Math.min(t, parseFloat(tuCash.value||0)));
+      tuOnline.value = Math.round(t-cash);
+    });
+    if(tuOnline) tuOnline.addEventListener('input', ()=>{
+      const t = amount();
+      const online = Math.max(0, Math.min(t, parseFloat(tuOnline.value||0)));
+      tuCash.value = Math.round(t-online);
+    });
+    document.getElementById('confirmTopUp').addEventListener('click', async function(){
+      const hours = parseFloat(document.getElementById('tuHours').value||0);
+      const amt = amount();
+      if(!hours || hours<=0){ showInlineError('topUpErr','Enter the number of hours to add.'); return; }
+      let cashAmount, onlineAmount;
+      if(payment==='cash'){ cashAmount=amt; onlineAmount=0; }
+      else if(payment==='online'){ cashAmount=0; onlineAmount=amt; }
+      else { cashAmount = Math.round(parseFloat(tuCash.value||0)); onlineAmount = Math.round(parseFloat(tuOnline.value||0)); }
+      const restore = setButtonBusy(this, 'Saving…');
+      try{
+        const data = await apiPost('topUpMembership', { id: uid(), memberId, hours, amount: amt, payment, cashAmount, onlineAmount });
+        applyState(data);
+        syncOk(); closeModal(); renderMembersTab();
+      }catch(e){
+        syncFail(e); restore();
+        showInlineError('topUpErr', "Couldn't save — check your connection and try again.");
+      }
+    });
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovTopUp').addEventListener('click', e=>{ if(e.target.id==='ovTopUp') closeModal(); });
+  }
+  render();
+}
+
+function openEditMemberModal(id){
+  const m = members.find(x=>x.id===id);
+  if(!m) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovEditMember">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Edit · ${m.name}</h3>
+        <label>Name</label><input type="text" id="emName" value="${m.name}">
+        <label>Phone</label><input type="text" id="emPhone" value="${m.phone||''}">
+        <div class="split-row">
+          <div><label>Total hrs (correction)</label><input type="number" id="emHoursTotal" min="0" step="0.25" value="${m.hoursTotal}"></div>
+          <div><label>Hrs used (correction)</label><input type="number" id="emHoursUsed" min="0" step="0.25" value="${m.hoursUsed}"></div>
+        </div>
+        <div class="hint">Use this only to fix a mistake — for a normal renewal, use Top up instead so the payment is logged.</div>
+        <label>Notes</label><input type="text" id="emNotes" value="${m.notes||''}">
+        <div style="margin-top:14px;"><button class="action btn-primary" style="width:100%" id="saveMemberEdit">Save changes</button></div>
+        <div class="err-text" id="editMemberErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('saveMemberEdit').addEventListener('click', async function(){
+    const name = document.getElementById('emName').value.trim();
+    const phone = document.getElementById('emPhone').value.trim();
+    const hoursTotal = parseFloat(document.getElementById('emHoursTotal').value||0);
+    const hoursUsed = parseFloat(document.getElementById('emHoursUsed').value||0);
+    const notes = document.getElementById('emNotes').value.trim();
+    if(!name){ showInlineError('editMemberErr','Give the member a name.'); return; }
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('editMember', { id, name, phone, hoursTotal, hoursUsed, notes });
+      applyState(data);
+      syncOk(); closeModal(); renderMembersTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('editMemberErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovEditMember').addEventListener('click', e=>{ if(e.target.id==='ovEditMember') closeModal(); });
+}
+
+function openDeleteMemberConfirm(id){
+  const m = members.find(x=>x.id===id);
+  if(!m) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovDelMember">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Delete ${m.name}?</h3>
+        <div class="hint">This removes their membership record. Past payment history stays in your reports. Any session currently running on their membership won't be able to check out until it's cancelled. This can't be undone.</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep it</button>
+          <button class="action btn-danger" id="confirmDelMember">Delete</button>
+        </div>
+        <div class="err-text" id="delMemberErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('confirmDelMember').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Deleting…');
+    try{
+      const data = await apiPost('deleteMember', {id});
+      applyState(data);
+      syncOk(); closeModal(); renderMembersTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('delMemberErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovDelMember').addEventListener('click', e=>{ if(e.target.id==='ovDelMember') closeModal(); });
+}
+
+function exportMembershipsCsv(){
+  const rows = [['Date','Time','Member','Type','Hours','Amount','Payment','Cash','Online']];
+  membershipPayments.slice().sort((a,b)=>a.timestamp-b.timestamp).forEach(p=>{
+    rows.push([p.date, fmtTime(p.timestamp), p.memberName, p.type, p.hours, p.amount, p.payment, Math.round(p.cashAmount||0), Math.round(p.onlineAmount||0)]);
+  });
+  downloadCsv(rows, 'gamezone-memberships.csv');
 }
 
 // ---------- SHOP TAB ----------
@@ -1353,11 +1776,12 @@ function renderDailyTab(){
   const entries = history.filter(h=>h.date===dailySelectedDate).sort((a,b)=>a.start-b.start);
   const daySales = sales.filter(s=>s.date===dailySelectedDate);
   const dayExpenses = expenses.filter(x=>x.date===dailySelectedDate);
+  const dayMembershipPayments = membershipPayments.filter(p=>p.date===dailySelectedDate);
   const total = entries.reduce((s,h)=>s+h.total,0);
   const cash = entries.reduce((s,h)=>s+(Number(h.cashAmount)||0),0);
   const online = entries.reduce((s,h)=>s+(Number(h.onlineAmount)||0),0);
 
-  html += renderBusinessSummary(entries, daySales, dayExpenses);
+  html += renderBusinessSummary(entries, daySales, dayExpenses, dayMembershipPayments);
 
   html += '<div class="card">';
   html += '<div class="section-title">Gaming</div>';
@@ -1384,29 +1808,51 @@ function renderDailyTab(){
   html += '</div>';
 
   html += renderShopDetail(daySales);
+  html += renderMembershipDetail(dayMembershipPayments);
   html += renderExpensesDetail(dayExpenses);
 
   el.innerHTML = html;
   document.getElementById('dailyDate').addEventListener('change', e=>{ dailySelectedDate = e.target.value; renderDailyTab(); });
 }
 
-function renderBusinessSummary(gamingEntries, saleEntries, expenseEntries){
+function renderBusinessSummary(gamingEntries, saleEntries, expenseEntries, membershipEntries){
+  membershipEntries = membershipEntries || [];
   const gamingTotal = gamingEntries.reduce((s,h)=>s+h.total,0);
   const shopRevenue = saleEntries.reduce((s,x)=>s+Number(x.revenue),0);
   const shopCost = saleEntries.reduce((s,x)=>s+Number(x.cost),0);
   const shopProfit = shopRevenue-shopCost;
+  const membershipRevenue = membershipEntries.reduce((s,p)=>s+Number(p.amount||0),0);
   const expenseTotal = expenseEntries.reduce((s,x)=>s+Number(x.amount),0);
-  const netProfit = gamingTotal + shopProfit - expenseTotal;
+  const netProfit = gamingTotal + shopProfit + membershipRevenue - expenseTotal;
 
   let html = '<div class="card">';
   html += '<div class="section-title">Net profit</div>';
-  html += '<div class="stat" style="margin-bottom:12px;"><div class="label">Gaming + shop profit − expenses</div><div class="value gold mono" style="font-size:27px;">'+money(netProfit)+'</div></div>';
+  html += '<div class="stat" style="margin-bottom:12px;"><div class="label">Gaming + shop profit + memberships − expenses</div><div class="value gold mono" style="font-size:27px;">'+money(netProfit)+'</div></div>';
   html += '<table>';
-  html += '<tr><td>Gaming revenue</td><td class="mono" style="text-align:right;">'+money(gamingTotal)+'</td></tr>';
+  html += '<tr><td>Gaming revenue (pay-per-hour)</td><td class="mono" style="text-align:right;">'+money(gamingTotal)+'</td></tr>';
   html += '<tr><td>Shop revenue</td><td class="mono" style="text-align:right;">'+money(shopRevenue)+'</td></tr>';
   html += '<tr><td>Shop cost of goods</td><td class="mono" style="text-align:right;">−'+money(shopCost)+'</td></tr>';
+  html += '<tr><td>Membership revenue</td><td class="mono" style="text-align:right;">'+money(membershipRevenue)+'</td></tr>';
   html += '<tr><td>Expenses</td><td class="mono" style="text-align:right;">−'+money(expenseTotal)+'</td></tr>';
   html += '</table>';
+  html += '<div class="hint" style="margin-top:8px;">Membership revenue is counted when the membership is bought or topped up — sessions that spend those hours later show ₹0 here so nothing is counted twice.</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderMembershipDetail(paymentEntries){
+  const revenue = paymentEntries.reduce((s,p)=>s+Number(p.amount||0),0);
+  const cash = paymentEntries.reduce((s,p)=>s+Number(p.cashAmount||0),0);
+  const online = paymentEntries.reduce((s,p)=>s+Number(p.onlineAmount||0),0);
+  const hours = paymentEntries.reduce((s,p)=>s+Number(p.hours||0),0);
+  let html = '<div class="card">';
+  html += '<div class="section-title">Memberships</div>';
+  html += '<div class="stat-row">';
+  html += '<div class="stat"><div class="label">Revenue</div><div class="value gold mono">'+money(revenue)+'</div></div>';
+  html += '<div class="stat"><div class="label">Cash</div><div class="value mono">'+money(cash)+'</div></div>';
+  html += '<div class="stat"><div class="label">Online</div><div class="value mono">'+money(online)+'</div></div>';
+  html += '</div>';
+  html += paymentEntries.length ? ('<div class="hint">'+paymentEntries.length+' payment'+(paymentEntries.length>1?'s':'')+' · '+fmtHours(hours)+' of hours sold in this period.</div>') : '<div class="hint">No membership purchases or top-ups in this period.</div>';
   html += '</div>';
   return html;
 }
@@ -1464,6 +1910,7 @@ function renderMonthlyTab(){
   const entries = history.filter(h=>monthKey(h.date)===monthlySelected);
   const monthSales = sales.filter(s=>monthKey(s.date)===monthlySelected);
   const monthExpenses = expenses.filter(x=>monthKey(x.date)===monthlySelected);
+  const monthMembershipPayments = membershipPayments.filter(p=>monthKey(p.date)===monthlySelected);
   const total = entries.reduce((s,h)=>s+h.total,0);
   const cash = entries.reduce((s,h)=>s+(Number(h.cashAmount)||0),0);
   const online = entries.reduce((s,h)=>s+(Number(h.onlineAmount)||0),0);
@@ -1476,7 +1923,7 @@ function renderMonthlyTab(){
   const activeDays = Object.values(perDay).filter(v=>v>0).length;
   const avg = activeDays ? total/activeDays : 0;
 
-  html += renderBusinessSummary(entries, monthSales, monthExpenses);
+  html += renderBusinessSummary(entries, monthSales, monthExpenses, monthMembershipPayments);
 
   html += '<div class="card">';
   html += '<div class="section-title">Gaming</div>';
@@ -1501,6 +1948,7 @@ function renderMonthlyTab(){
   html += '</div>';
 
   html += renderShopDetail(monthSales);
+  html += renderMembershipDetail(monthMembershipPayments);
   html += renderExpensesDetail(monthExpenses);
 
   el.innerHTML = html;
@@ -1524,7 +1972,7 @@ function renderHistoryTab(){
   html += '<div><label>To</label><input type="date" id="fTo" value="'+histFilters.to+'"></div>';
   html += '</div><div class="filters">';
   html += '<div><label>System</label><select id="fSys"><option value="all">All</option>'+SYS_KEYS.map(k=>'<option value="'+k+'" '+(histFilters.sys===k?'selected':'')+'>'+SYSTEMS[k].name+'</option>').join('')+'</select></div>';
-  html += '<div><label>Payment</label><select id="fPay"><option value="all">All</option><option value="cash" '+(histFilters.pay==='cash'?'selected':'')+'>Cash</option><option value="online" '+(histFilters.pay==='online'?'selected':'')+'>Online</option><option value="split" '+(histFilters.pay==='split'?'selected':'')+'>Split</option></select></div>';
+  html += '<div><label>Payment</label><select id="fPay"><option value="all">All</option><option value="cash" '+(histFilters.pay==='cash'?'selected':'')+'>Cash</option><option value="online" '+(histFilters.pay==='online'?'selected':'')+'>Online</option><option value="split" '+(histFilters.pay==='split'?'selected':'')+'>Split</option><option value="membership" '+(histFilters.pay==='membership'?'selected':'')+'>Membership</option></select></div>';
   html += '</div>';
   html += '<div class="hint">'+entries.length+' sessions · total <b class="mono" style="color:var(--gold)">'+money(total)+'</b></div>';
   html += '<div style="margin-top:8px;"><a href="#" class="export" id="exportCsv">Export CSV ↓</a></div>';
@@ -1566,10 +2014,47 @@ function renderHistoryTab(){
   document.querySelectorAll('[data-del-hist]').forEach(b=>b.addEventListener('click', ()=>openDeleteHistConfirm(b.getAttribute('data-del-hist'))));
 }
 
+function openEditMembershipHistModal(h, sys){
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovEditMem">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3 style="color:${sys.color}">Edit · ${sys.name}</h3>
+        <div class="hint">${fmtDateShort(h.start)} · started ${fmtTime(h.start)} · 🎫 ${h.memberName||'Membership'}</div>
+        <label>Players</label>
+        <div class="stepper"><button id="emhDec">−</button><div class="n mono" id="emhVal">${h.players}</div><button id="emhInc">+</button></div>
+        <label>Hours (as logged — does not re-adjust the member's balance)</label>
+        <input type="number" id="emhHours" step="0.25" min="0.25" value="${h.hours}">
+        <div class="hint">This was a membership session — no money changes hands here. To correct the member's remaining hours, edit them directly from the Members tab.</div>
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="saveMemHistEdit">Save changes</button></div>
+        <div class="err-text" id="editMemHistErr"></div>
+      </div>
+    </div>`;
+  let players = h.players;
+  document.getElementById('emhDec').addEventListener('click', ()=>{ if(players>1){ players--; document.getElementById('emhVal').textContent=players; }});
+  document.getElementById('emhInc').addEventListener('click', ()=>{ if(players<sys.max){ players++; document.getElementById('emhVal').textContent=players; }});
+  document.getElementById('saveMemHistEdit').addEventListener('click', async function(){
+    const hours = Math.max(0.25, parseFloat(document.getElementById('emhHours').value||h.hours));
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('editHistory', { id: h.id, players, hours, payment: 'membership', hourly: 0, cashAmount: 0, onlineAmount: 0 });
+      applyState(data);
+      syncOk(); closeModal(); renderHistoryTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('editMemHistErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovEditMem').addEventListener('click', e=>{ if(e.target.id==='ovEditMem') closeModal(); });
+}
+
 function openEditHistModal(id){
   const h = history.find(x=>x.id===id);
   if(!h) return;
   const sys = SYSTEMS[h.sys];
+  if(h.payment==='membership'){ openEditMembershipHistModal(h, sys); return; }
   const existingCash = (h.cashAmount!==undefined && h.cashAmount!=='') ? Number(h.cashAmount) : (h.payment==='online' ? 0 : h.total);
   const existingOnline = (h.onlineAmount!==undefined && h.onlineAmount!=='') ? Number(h.onlineAmount) : (h.payment==='online' ? h.total : 0);
   const root = document.getElementById('modal-root');
@@ -1689,7 +2174,7 @@ function openDeleteHistConfirm(id){
 }
 
 function downloadBackup(){
-  const payload = { exportedAt: new Date().toISOString(), activeSessions, history, products, sales, expenses };
+  const payload = { exportedAt: new Date().toISOString(), activeSessions, history, products, sales, expenses, pendingItems, members, membershipPayments };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1725,7 +2210,9 @@ function openRestoreConfirm(data){
   if(data.products!==undefined) detail += ', '+data.products.length+' products';
   if(data.sales!==undefined) detail += ', '+data.sales.length+' sales';
   if(data.expenses!==undefined) detail += ', '+data.expenses.length+' expenses';
-  const missingNote = (data.products===undefined) ? ' This is an older-format backup, so your current Shop and Expenses data will be left untouched.' : '';
+  if(data.members!==undefined) detail += ', '+data.members.length+' members';
+  if(data.membershipPayments!==undefined) detail += ', '+data.membershipPayments.length+' membership payments';
+  const missingNote = (data.products===undefined) ? ' This is an older-format backup, so your current Shop, Expenses and Members data will be left untouched.' : '';
   root.innerHTML = `
     <div class="overlay" id="ovRestore">
       <div class="sheet">
@@ -1746,6 +2233,9 @@ function openRestoreConfirm(data){
       if(data.products!==undefined) payload.products = data.products;
       if(data.sales!==undefined) payload.sales = data.sales;
       if(data.expenses!==undefined) payload.expenses = data.expenses;
+      if(data.pendingItems!==undefined) payload.pendingItems = data.pendingItems;
+      if(data.members!==undefined) payload.members = data.members;
+      if(data.membershipPayments!==undefined) payload.membershipPayments = data.membershipPayments;
       const result = await apiPost('restoreAll', payload);
       applyState(result);
       syncOk(); closeModal(); renderCurrentTab();
