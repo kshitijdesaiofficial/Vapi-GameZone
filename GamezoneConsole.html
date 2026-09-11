@@ -191,6 +191,10 @@
 <div id="modal-root"></div>
 
 <script>
+// ======================================================================
+// 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
+//    See gamezone-backend.gs for the script and setup steps.
+// ======================================================================
 const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
 
 function isConfigured(){
@@ -228,6 +232,35 @@ const SYS_KEYS = Object.keys(SYSTEMS);
 const PRODUCT_CATEGORIES = { snack:'Snack', drink:'Drink', other:'Other' };
 const EXPENSE_CATEGORIES = ['Electricity', 'Rent', 'Salary', 'Maintenance', 'Other'];
 const LOW_STOCK_THRESHOLD = 5;
+
+// Owner-only lock: staff running the counter can see today's live figures,
+// but the Month tab and the total-revenue line in History stay hidden until
+// this PIN is entered. Change this to your own PIN — it's just a simple
+// screen lock for a shared device, not a real login system, so don't rely
+// on it if the device itself is unsupervised. It resets to locked every
+// time the page is loaded/reloaded.
+const OWNER_PIN = '3903';
+let ownerUnlocked = false;
+function ownerLockControl(){
+  return ownerUnlocked
+    ? '<button class="btn-mini" id="ownerLockToggle" style="margin-left:8px;">🔓 Lock</button>'
+    : '<button class="btn-mini" id="ownerLockToggle" style="margin-left:8px;">🔒 Owner view</button>';
+}
+function attachOwnerLockControl(afterUnlockFn){
+  const btn = document.getElementById('ownerLockToggle');
+  if(!btn) return;
+  btn.addEventListener('click', ()=>{
+    if(ownerUnlocked){ ownerUnlocked = false; afterUnlockFn(); return; }
+    const pin = prompt('Enter owner PIN to view revenue totals:');
+    if(pin===null) return;
+    if(pin===OWNER_PIN){ ownerUnlocked = true; afterUnlockFn(); }
+    else alert('Incorrect PIN.');
+  });
+}
+function ownerLockedCard(title){
+  return '<div class="card"><div class="section-title">'+title+' '+ownerLockControl()+'</div>'
+    + '<div class="empty">Owner-only — tap "🔒 Owner view" above and enter the PIN to see this.</div></div>';
+}
 
 let activeSessions = [];
 let history = [];
@@ -1907,6 +1940,15 @@ let monthlySelected = thisMonthKey();
 function renderMonthlyTab(){
   const el = document.getElementById('tab-monthly');
   let html = '<label>Month</label><input type="month" id="monthlyMonth" value="'+monthlySelected+'">';
+
+  if(!ownerUnlocked){
+    html += ownerLockedCard('Monthly revenue');
+    el.innerHTML = html;
+    document.getElementById('monthlyMonth').addEventListener('change', e=>{ monthlySelected = e.target.value; renderMonthlyTab(); });
+    attachOwnerLockControl(renderMonthlyTab);
+    return;
+  }
+
   const entries = history.filter(h=>monthKey(h.date)===monthlySelected);
   const monthSales = sales.filter(s=>monthKey(s.date)===monthlySelected);
   const monthExpenses = expenses.filter(x=>monthKey(x.date)===monthlySelected);
@@ -1923,6 +1965,7 @@ function renderMonthlyTab(){
   const activeDays = Object.values(perDay).filter(v=>v>0).length;
   const avg = activeDays ? total/activeDays : 0;
 
+  html += '<div class="hint" style="text-align:right;margin-bottom:6px;">'+ownerLockControl()+'</div>';
   html += renderBusinessSummary(entries, monthSales, monthExpenses, monthMembershipPayments);
 
   html += '<div class="card">';
@@ -1953,6 +1996,7 @@ function renderMonthlyTab(){
 
   el.innerHTML = html;
   document.getElementById('monthlyMonth').addEventListener('change', e=>{ monthlySelected = e.target.value; renderMonthlyTab(); });
+  attachOwnerLockControl(renderMonthlyTab);
 }
 
 // ---------- HISTORY TAB ----------
@@ -1974,7 +2018,7 @@ function renderHistoryTab(){
   html += '<div><label>System</label><select id="fSys"><option value="all">All</option>'+SYS_KEYS.map(k=>'<option value="'+k+'" '+(histFilters.sys===k?'selected':'')+'>'+SYSTEMS[k].name+'</option>').join('')+'</select></div>';
   html += '<div><label>Payment</label><select id="fPay"><option value="all">All</option><option value="cash" '+(histFilters.pay==='cash'?'selected':'')+'>Cash</option><option value="online" '+(histFilters.pay==='online'?'selected':'')+'>Online</option><option value="split" '+(histFilters.pay==='split'?'selected':'')+'>Split</option><option value="membership" '+(histFilters.pay==='membership'?'selected':'')+'>Membership</option></select></div>';
   html += '</div>';
-  html += '<div class="hint">'+entries.length+' sessions · total <b class="mono" style="color:var(--gold)">'+money(total)+'</b></div>';
+  html += '<div class="hint">'+entries.length+' sessions · total '+(ownerUnlocked ? ('<b class="mono" style="color:var(--gold)">'+money(total)+'</b>') : '<b class="mono" style="color:var(--muted)">••••</b>')+' '+ownerLockControl()+'</div>';
   html += '<div style="margin-top:8px;"><a href="#" class="export" id="exportCsv">Export CSV ↓</a></div>';
   html += '</div>';
 
@@ -2012,6 +2056,7 @@ function renderHistoryTab(){
   document.getElementById('restoreFileInput').addEventListener('change', handleRestoreFile);
   document.querySelectorAll('[data-edit-hist]').forEach(b=>b.addEventListener('click', ()=>openEditHistModal(b.getAttribute('data-edit-hist'))));
   document.querySelectorAll('[data-del-hist]').forEach(b=>b.addEventListener('click', ()=>openDeleteHistConfirm(b.getAttribute('data-del-hist'))));
+  attachOwnerLockControl(renderHistoryTab);
 }
 
 function openEditMembershipHistModal(h, sys){
