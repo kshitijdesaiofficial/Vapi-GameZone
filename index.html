@@ -197,7 +197,6 @@
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
 const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
-
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
 }
@@ -407,13 +406,13 @@ function openPaymentQrSettingsModal(){
     document.getElementById('ovQrSettings').addEventListener('click', e=>{ if(e.target.id==='ovQrSettings') closeModal(); });
     document.getElementById('qrFileInput').addEventListener('change', async e=>{
       const file = e.target.files[0]; if(!file) return;
-      const errEl = document.getElementById('qrSettingsErr'); errEl.textContent='';
+      const errEl = document.getElementById('qrSettingsErr'); errEl.textContent=''; errEl.style.display='none';
       try{
         const uri = await resizeQrImageFile(file);
         const data = await apiPost('setSetting', { key:'paymentQrImage', value: uri });
         applyState(data); syncOk(); render();
       }catch(err){
-        errEl.textContent = err.message || "Couldn't save that image — please try again.";
+        showInlineError('qrSettingsErr', err.message || "Couldn't save that image — please try again.");
       }
     });
     const removeBtn = document.getElementById('removeQrBtn');
@@ -424,7 +423,7 @@ function openPaymentQrSettingsModal(){
         applyState(data); syncOk(); render();
       }catch(err){
         syncFail(err); restore();
-        document.getElementById('qrSettingsErr').textContent = "Couldn't remove it — check your connection and try again.";
+        showInlineError('qrSettingsErr', "Couldn't remove it — check your connection and try again.");
       }
     });
   }
