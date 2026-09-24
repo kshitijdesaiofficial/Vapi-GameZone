@@ -164,6 +164,7 @@
 <div id="app">
   <header>
     <div class="brand"><span class="dot"></span><h1>Vapi GameZone Sales Console</h1></div>
+    <button class="btn-mini" id="paymentQrSettingsBtn" title="Set your payment QR code" style="margin-right:8px;">🧾 QR</button>
     <div class="clock" id="clockBox"><span id="clockDate"></span><span class="t mono" id="clockTime"></span></div>
   </header>
   <div class="sync-strip"><span class="sync-dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
@@ -239,7 +240,7 @@ const LOW_STOCK_THRESHOLD = 5;
 // screen lock for a shared device, not a real login system, so don't rely
 // on it if the device itself is unsupervised. It resets to locked every
 // time the page is loaded/reloaded.
-const OWNER_PIN = '3903';
+const OWNER_PIN = '1234';
 let ownerUnlocked = false;
 function ownerLockControl(){
   return ownerUnlocked
@@ -270,6 +271,7 @@ let expenses = [];
 let pendingItems = [];
 let members = [];
 let membershipPayments = [];
+let settings = {};
 let currentTab = 'active';
 let newSessionSys = null;
 let newSessionPlayers = 1;
@@ -354,6 +356,98 @@ function resizeImageFile(file){
     reader.readAsDataURL(file);
   });
 }
+
+// A QR code needs to stay lossless and reasonably large to stay scannable —
+// unlike product thumbnails, this deliberately skips JPEG compression.
+function resizeQrImageFile(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const maxDim = 520;
+        let w = img.width, h = img.height;
+        if(w >= h){ if(w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; } }
+        else { if(h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; } }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h); // flatten transparency onto white so scanners see clean contrast
+        ctx.drawImage(img, 0, 0, w, h);
+        const uri = canvas.toDataURL('image/png');
+        if(uri.length > 49000){ reject(new Error('That image is too large/detailed even after resizing — try a simpler, more square QR image.')); return; }
+        resolve(uri);
+      };
+      img.onerror = ()=>reject(new Error('bad image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = ()=>reject(new Error('bad file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function openPaymentQrSettingsModal(){
+  const root = document.getElementById('modal-root');
+  function render(){
+    const current = settings.paymentQrImage;
+    root.innerHTML = `
+      <div class="overlay" id="ovQrSettings">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3>Payment QR code</h3>
+          <div class="hint">Shown to customers automatically whenever Online or Split is selected at checkout, so they can scan and pay on the spot.</div>
+          ${current ? '<div style="text-align:center;margin:16px 0;"><img src="'+current+'" style="width:200px;height:200px;object-fit:contain;border-radius:12px;border:1px solid var(--border);background:#fff;"></div>' : '<div class="empty" style="margin:16px 0;">No QR code set yet.</div>'}
+          <label>${current ? 'Replace it' : 'Upload your UPI/payment QR'}</label>
+          <input type="file" accept="image/*" id="qrFileInput">
+          <div class="err-text" id="qrSettingsErr"></div>
+          ${current ? '<div style="margin-top:12px;"><button class="action btn-danger" id="removeQrBtn" style="width:100%">Remove QR code</button></div>' : ''}
+        </div>
+      </div>`;
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovQrSettings').addEventListener('click', e=>{ if(e.target.id==='ovQrSettings') closeModal(); });
+    document.getElementById('qrFileInput').addEventListener('change', async e=>{
+      const file = e.target.files[0]; if(!file) return;
+      const errEl = document.getElementById('qrSettingsErr'); errEl.textContent='';
+      try{
+        const uri = await resizeQrImageFile(file);
+        const data = await apiPost('setSetting', { key:'paymentQrImage', value: uri });
+        applyState(data); syncOk(); render();
+      }catch(err){
+        errEl.textContent = err.message || "Couldn't save that image — please try again.";
+      }
+    });
+    const removeBtn = document.getElementById('removeQrBtn');
+    if(removeBtn) removeBtn.addEventListener('click', async function(){
+      const restore = setButtonBusy(this, 'Removing…');
+      try{
+        const data = await apiPost('setSetting', { key:'paymentQrImage', value:'' });
+        applyState(data); syncOk(); render();
+      }catch(err){
+        syncFail(err); restore();
+        document.getElementById('qrSettingsErr').textContent = "Couldn't remove it — check your connection and try again.";
+      }
+    });
+  }
+  render();
+}
+
+// Reusable block shown inside a checkout modal whenever the customer is
+// paying some amount online — renders nothing if no QR has been set yet,
+// with a quiet prompt an owner/staff member can tap to add one.
+function qrBlockHtml(amount){
+  if(amount <= 0) return '';
+  if(settings.paymentQrImage){
+    return '<div style="text-align:center;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:14px;">'
+      + '<img src="'+settings.paymentQrImage+'" style="width:170px;height:170px;object-fit:contain;border-radius:8px;background:#fff;padding:6px;">'
+      + '<div class="hint" style="margin-top:8px;">Scan to pay <b class="mono" style="color:var(--text);">'+money(amount)+'</b></div>'
+      + '</div>';
+  }
+  return '<div class="hint" style="margin-top:10px;">No payment QR set yet — <a href="#" data-open-qr-settings style="color:var(--gold);">add one</a> so customers can scan and pay.</div>';
+}
+function wireQrBlockLinks(){
+  document.querySelectorAll('[data-open-qr-settings]').forEach(a=>a.addEventListener('click', e=>{ e.preventDefault(); openPaymentQrSettingsModal(); }));
+}
+
 function avatarColor(name){
   const palette = ['#9B7BFF','#5FD34A','#2FA8E8','#F2B705','#FF5C5C','#F2A93B'];
   let hash = 0;
@@ -379,6 +473,7 @@ function applyState(data){
   products = data.products||[]; sales = data.sales||[]; expenses = data.expenses||[];
   pendingItems = data.pendingItems||[];
   members = data.members||[]; membershipPayments = data.membershipPayments||[];
+  settings = data.settings||{};
 }
 
 async function initialLoad(){
@@ -398,7 +493,8 @@ async function pollState(){
       JSON.stringify(data.expenses)!==JSON.stringify(expenses) ||
       JSON.stringify(data.pendingItems)!==JSON.stringify(pendingItems) ||
       JSON.stringify(data.members)!==JSON.stringify(members) ||
-      JSON.stringify(data.membershipPayments)!==JSON.stringify(membershipPayments);
+      JSON.stringify(data.membershipPayments)!==JSON.stringify(membershipPayments) ||
+      JSON.stringify(data.settings)!==JSON.stringify(settings);
     if(changed){
       applyState(data);
       // Don't blow away a form the person is actively typing into — the
@@ -795,11 +891,25 @@ function openCheckoutModal(id){
             <div class="label">Total bill${isMembership?(hasExtras()?' (snacks only — gaming via membership)':' (covered by membership)'):((already.length||cart.length)?' (gaming + snacks)':'')}</div>
             <div class="value gold mono" id="totalPreview">${money(total)}</div>
           </div>
+          <div id="qrBlockContainer"></div>
           <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmCheckout">Confirm & save</button></div>
           <div class="err-text" id="checkoutErr"></div>
         </div>
       </div>`;
     attachHandlers();
+    updateQrBlock();
+  }
+
+  function onlineAmountNow(){
+    if(payment==='online') return grandTotal();
+    if(payment==='split'){ const oi=document.getElementById('onlineAmountInput'); return oi ? (parseFloat(oi.value)||0) : 0; }
+    return 0;
+  }
+  function updateQrBlock(){
+    const el = document.getElementById('qrBlockContainer');
+    if(!el) return;
+    el.innerHTML = qrBlockHtml(onlineAmountNow());
+    wireQrBlockLinks();
   }
 
   function refreshTotals(){
@@ -819,6 +929,7 @@ function openCheckoutModal(id){
       const ci = document.getElementById('cashAmountInput'), oi = document.getElementById('onlineAmountInput');
       if(ci && oi){ ci.value = t; oi.value = 0; }
     }
+    updateQrBlock();
   }
 
   function attachHandlers(){
@@ -856,11 +967,13 @@ function openCheckoutModal(id){
       const t = grandTotal();
       const cash = Math.max(0, Math.min(t, parseFloat(cashAmountInput.value||0)));
       onlineAmountInput.value = Math.round(t-cash);
+      updateQrBlock();
     });
     if(onlineAmountInput) onlineAmountInput.addEventListener('input', ()=>{
       const t = grandTotal();
       const online = Math.max(0, Math.min(t, parseFloat(onlineAmountInput.value||0)));
       cashAmountInput.value = Math.round(t-online);
+      updateQrBlock();
     });
 
     document.getElementById('confirmCheckout').addEventListener('click', async function(){
@@ -1457,6 +1570,7 @@ function openSellModal(productId){
             <button data-spay="online" class="${payment==='online'?'selected':''}">Online</button>
           </div>
           <div class="stat" style="margin-top:14px;"><div class="label">Total</div><div class="value gold mono">${money(total)}</div></div>
+          ${qrBlockHtml(payment==='online' ? total : 0)}
           <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmSell">Confirm sale</button></div>
           <div class="err-text" id="sellErr"></div>
         </div>
@@ -1477,6 +1591,7 @@ function openSellModal(productId){
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
     document.getElementById('ovSell').addEventListener('click', e=>{ if(e.target.id==='ovSell') closeModal(); });
+    wireQrBlockLinks();
   }
   render();
 }
@@ -2347,6 +2462,7 @@ function showSetupBanner(){
   setInterval(pollState, 6000);
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') pollState(); });
   window.addEventListener('focus', pollState);
+  document.getElementById('paymentQrSettingsBtn').addEventListener('click', openPaymentQrSettingsModal);
 })();
 </script>
 </body>
