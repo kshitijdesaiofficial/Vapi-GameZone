@@ -112,6 +112,9 @@
   .img-preview{width:76px;height:76px;border-radius:10px;overflow:hidden;background:var(--panel2);align-items:center;justify-content:center;margin-top:8px;}
   .img-preview img{width:100%;height:100%;object-fit:cover;display:block;}
   input[type=file]{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--muted);padding:8px;border-radius:10px;font-size:12.5px;}
+  .su-input{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:10px;font-size:14px;font-family:'JetBrains Mono',monospace;}
+  .su-input:focus{outline:none;border-color:rgba(242,183,5,.6);}
+  .su-tag{display:inline-block;font-size:10px;color:var(--gold);border:1px solid rgba(242,183,5,.35);border-radius:20px;padding:1px 7px;}
 
   .stepper{display:flex;align-items:center;gap:10px;justify-content:center;background:var(--panel2);border-radius:10px;padding:8px;}
   .stepper button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:18px;cursor:pointer;transition:transform .12s ease;}
@@ -196,7 +199,7 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
+const API_URL = '';
 
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
@@ -268,6 +271,7 @@ let history = [];
 let products = [];
 let sales = [];
 let expenses = [];
+let selfUse = [];
 let pendingItems = [];
 let members = [];
 let membershipPayments = [];
@@ -365,16 +369,40 @@ function resizeQrImageFile(file){
     reader.onload = (e)=>{
       const img = new Image();
       img.onload = ()=>{
-        const maxDim = 520;
-        let w = img.width, h = img.height;
-        if(w >= h){ if(w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; } }
-        else { if(h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; } }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h); // flatten transparency onto white so scanners see clean contrast
-        ctx.drawImage(img, 0, 0, w, h);
-        const uri = canvas.toDataURL('image/png');
+        // Render at a given max dimension, then threshold every pixel to
+        // pure black or white. A QR code is only ever two tones — but a
+        // camera photo of one carries noise, blur and JPEG artifacts that
+        // compress terribly as lossless PNG even at small pixel sizes.
+        // Thresholding removes that noise, which both shrinks the file a
+        // lot and makes a photographed code scan more reliably.
+        function renderAt(maxDim){
+          let w = img.width, h = img.height;
+          if(w >= h){ if(w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; } }
+          else { if(h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; } }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h); // flatten transparency onto white so scanners see clean contrast
+          ctx.drawImage(img, 0, 0, w, h);
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const d = imgData.data;
+          for(let i=0; i<d.length; i+=4){
+            const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+            const v = lum < 150 ? 0 : 255;
+            d[i] = d[i+1] = d[i+2] = v;
+            d[i+3] = 255;
+          }
+          ctx.putImageData(imgData, 0, 0);
+          return canvas.toDataURL('image/png');
+        }
+        // Try progressively smaller renders until one fits in a Sheets cell,
+        // rather than failing the first time.
+        const sizesToTry = [520, 420, 340, 260, 200];
+        let uri = renderAt(sizesToTry[0]);
+        for(const dim of sizesToTry){
+          uri = renderAt(dim);
+          if(uri.length <= 49000) break;
+        }
         if(uri.length > 49000){ reject(new Error('That image is too large/detailed even after resizing — try a simpler, more square QR image.')); return; }
         resolve(uri);
       };
@@ -471,6 +499,7 @@ function syncFail(e){ syncFailStreak++; console.error(e); updateSyncStatus(); }
 function applyState(data){
   activeSessions = data.activeSessions; history = data.history;
   products = data.products||[]; sales = data.sales||[]; expenses = data.expenses||[];
+  selfUse = data.selfUse||[];
   pendingItems = data.pendingItems||[];
   members = data.members||[]; membershipPayments = data.membershipPayments||[];
   settings = data.settings||{};
@@ -491,6 +520,7 @@ async function pollState(){
       JSON.stringify(data.products)!==JSON.stringify(products) ||
       JSON.stringify(data.sales)!==JSON.stringify(sales) ||
       JSON.stringify(data.expenses)!==JSON.stringify(expenses) ||
+      JSON.stringify(data.selfUse||[])!==JSON.stringify(selfUse) ||
       JSON.stringify(data.pendingItems)!==JSON.stringify(pendingItems) ||
       JSON.stringify(data.members)!==JSON.stringify(members) ||
       JSON.stringify(data.membershipPayments)!==JSON.stringify(membershipPayments) ||
@@ -1453,6 +1483,32 @@ function renderShopTab(){
   }
   html += '</div>';
 
+  const suTodayCost = selfUse.filter(x=>x.date===todayKey()).reduce((s,x)=>s+Number(x.cost),0);
+  const suMonthCost = selfUse.filter(x=>monthKey(x.date)===thisMonthKey()).reduce((s,x)=>s+Number(x.cost),0);
+  html += '<div class="card">';
+  html += '<div class="section-title">Self use</div>';
+  html += '<div class="hint">Products we take for ourselves. They come out of stock and their cost price is counted as an expense. Owner PIN needed to add or remove.</div>';
+  html += '<div class="stat-row" style="margin:10px 0;">';
+  html += '<div class="stat"><div class="label">Cost today</div><div class="value mono">'+money(suTodayCost)+'</div></div>';
+  html += '<div class="stat"><div class="label">Cost this month</div><div class="value gold mono">'+money(suMonthCost)+'</div></div>';
+  html += '</div>';
+  html += '<button class="action btn-ghost" id="openSelfUse" style="width:100%">+ Log self use</button>';
+  const recentSelfUse = selfUse.slice().sort((a,b)=>b.timestamp-a.timestamp).slice(0,10);
+  if(recentSelfUse.length>0){
+    html += '<table style="margin-top:12px;"><tr><th>When</th><th>Item</th><th>Qty</th><th>Cost</th><th></th></tr>';
+    recentSelfUse.forEach(s=>{
+      html += '<tr><td class="mono">'+fmtDateShort(s.timestamp)+' '+fmtTime(s.timestamp)+'</td>'
+        + '<td>'+suEsc(s.productName)+(s.note?'<div class="hint" style="margin:0;">'+suEsc(s.note)+'</div>':'')+'</td>'
+        + '<td class="mono">'+s.qty+'</td><td class="mono">'+money(s.cost)+'</td>'
+        + '<td><button class="btn-mini" data-del-selfuse="'+suEsc(s.id)+'" style="color:var(--danger)">Del</button></td></tr>';
+    });
+    html += '</table>';
+    html += '<div class="hint">Showing the 10 most recent. Every entry is also in Expenses as "Self use".</div>';
+  } else {
+    html += '<div class="empty" style="padding:16px 10px 6px;">Nothing logged yet.</div>';
+  }
+  html += '</div>';
+
   html += '<div class="card">';
   html += '<div class="section-title">Stock & pricing</div>';
   if(products.length===0){
@@ -1513,6 +1569,11 @@ function attachShopHandlers(){
   }));
   document.querySelectorAll('[data-del-sale]').forEach(b=>b.addEventListener('click', ()=>{
     openDeleteSaleConfirm(b.getAttribute('data-del-sale'));
+  }));
+  const selfUseBtn = document.getElementById('openSelfUse');
+  if(selfUseBtn) selfUseBtn.addEventListener('click', ()=>openSelfUseModal());
+  document.querySelectorAll('[data-del-selfuse]').forEach(b=>b.addEventListener('click', ()=>{
+    openDeleteSelfUseConfirm(b.getAttribute('data-del-selfuse'));
   }));
   const toggleBtn = document.getElementById('toggleAddProduct');
   if(toggleBtn) toggleBtn.addEventListener('click', ()=>{ showAddProduct = !showAddProduct; newProductImageData=''; renderShopTab(); });
@@ -1761,6 +1822,131 @@ function openDeleteSaleConfirm(id){
   document.getElementById('ovDelSale').addEventListener('click', e=>{ if(e.target.id==='ovDelSale') closeModal(); });
 }
 
+// ---------- SELF USE (owner-PIN protected) ----------
+// Uses the same OWNER_PIN as the Owner view lock. Like that lock, it's a
+// screen lock on a shared device, not real authentication.
+function suEsc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function pinMatches(v){ return String(v||'').trim()===OWNER_PIN; }
+
+function openSelfUseModal(){
+  const root = document.getElementById('modal-root');
+  const avail = productsSorted().filter(p=>p.stock>0);
+  if(avail.length===0){
+    root.innerHTML = `
+      <div class="overlay" id="ovSelfUse">
+        <div class="sheet">
+          <button class="close-x" data-close>✕</button>
+          <h3>Log self use</h3>
+          <div class="empty">Nothing is in stock to take.</div>
+        </div>
+      </div>`;
+    document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovSelfUse').addEventListener('click', e=>{ if(e.target.id==='ovSelfUse') closeModal(); });
+    return;
+  }
+  let pid = avail[0].id;
+  let qty = 1;
+  const current = ()=>products.find(x=>x.id===pid);
+  root.innerHTML = `
+    <div class="overlay" id="ovSelfUse">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Log self use</h3>
+        <div class="hint">Comes out of stock and its cost price is added to Expenses.</div>
+        <label>Product</label>
+        <select id="suProduct">${avail.map(p=>'<option value="'+suEsc(p.id)+'">'+suEsc(p.name)+' ('+p.stock+' left)</option>').join('')}</select>
+        <div class="hint" id="suHint"></div>
+        <label>Quantity</label>
+        <div class="stepper"><button id="suDec">−</button><div class="n mono" id="suQty">1</div><button id="suInc">+</button></div>
+        <div class="stat" style="margin-top:14px;"><div class="label">Cost added to expenses</div><div class="value gold mono" id="suCost"></div></div>
+        <label>Note (optional)</label>
+        <input type="text" class="su-input" id="suNote" placeholder="e.g. staff lunch" maxlength="80">
+        <label>Owner PIN</label>
+        <input type="password" class="su-input" id="suPin" inputmode="numeric" autocomplete="off" placeholder="Enter owner PIN">
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmSelfUse">Confirm self use</button></div>
+        <div class="err-text" id="suErr"></div>
+      </div>
+    </div>`;
+  function refresh(){
+    const p = current(); if(!p) return;
+    if(qty>p.stock) qty = Math.max(1, p.stock);
+    if(qty<1) qty = 1;
+    document.getElementById('suQty').textContent = qty;
+    document.getElementById('suHint').textContent = p.stock+' in stock · cost price '+money(p.costPrice)+' each';
+    document.getElementById('suCost').textContent = money(Math.round(qty*p.costPrice));
+  }
+  refresh();
+  document.getElementById('suProduct').addEventListener('change', e=>{ pid = e.target.value; qty = 1; refresh(); });
+  document.getElementById('suDec').addEventListener('click', ()=>{ qty--; refresh(); });
+  document.getElementById('suInc').addEventListener('click', ()=>{ qty++; refresh(); });
+  document.getElementById('suPin').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('confirmSelfUse').click(); });
+  document.getElementById('confirmSelfUse').addEventListener('click', async function(){
+    const pinEl = document.getElementById('suPin');
+    if(!pinMatches(pinEl.value)){
+      showInlineError('suErr', 'Incorrect owner PIN.');
+      pinEl.value = ''; pinEl.focus();
+      return;
+    }
+    const p = current();
+    if(!p){ showInlineError('suErr', 'That product no longer exists.'); return; }
+    const note = document.getElementById('suNote').value.trim();
+    const restore = setButtonBusy(this, 'Saving…');
+    try{
+      const data = await apiPost('logSelfUse', { id: uid(), productId: pid, qty, note });
+      applyState(data);
+      syncOk(); closeModal(); renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('suErr', "Couldn't save — check your connection and try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovSelfUse').addEventListener('click', e=>{ if(e.target.id==='ovSelfUse') closeModal(); });
+}
+
+function openDeleteSelfUseConfirm(id){
+  const s = selfUse.find(x=>x.id===id);
+  if(!s) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovDelSelfUse">
+      <div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3>Remove this self-use entry?</h3>
+        <div class="hint">${s.qty} × ${suEsc(s.productName)} goes back into stock and its ${money(s.cost)} expense is removed. This can't be undone.</div>
+        <label>Owner PIN</label>
+        <input type="password" class="su-input" id="dsuPin" inputmode="numeric" autocomplete="off" placeholder="Enter owner PIN">
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="action btn-ghost" data-close>Keep it</button>
+          <button class="action btn-danger" id="confirmDelSelfUse">Remove</button>
+        </div>
+        <div class="err-text" id="delSelfUseErr"></div>
+      </div>
+    </div>`;
+  document.getElementById('dsuPin').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('confirmDelSelfUse').click(); });
+  document.getElementById('confirmDelSelfUse').addEventListener('click', async function(){
+    const pinEl = document.getElementById('dsuPin');
+    if(!pinMatches(pinEl.value)){
+      showInlineError('delSelfUseErr', 'Incorrect owner PIN.');
+      pinEl.value = ''; pinEl.focus();
+      return;
+    }
+    const restore = setButtonBusy(this, 'Removing…');
+    try{
+      const data = await apiPost('deleteSelfUse', { id });
+      applyState(data);
+      syncOk(); closeModal(); renderShopTab();
+    }catch(e){
+      syncFail(e); restore();
+      showInlineError('delSelfUseErr', "Couldn't reach the server — try again.");
+    }
+  });
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+  document.getElementById('ovDelSelfUse').addEventListener('click', e=>{ if(e.target.id==='ovDelSelfUse') closeModal(); });
+}
+
 // ---------- EXPENSES TAB ----------
 let showAddExpense = false;
 let expenseCustomCategory = false;
@@ -1800,7 +1986,12 @@ function renderExpensesTab(){
     html += '<table><tr><th>Date</th><th>Category</th><th>Amount</th><th>Note</th><th></th></tr>';
     sorted.forEach(x=>{
       html += '<tr><td class="mono">'+fmtDateShort(x.timestamp||Date.parse(x.date))+'</td><td>'+x.category+'</td><td class="mono">'+money(x.amount)+'</td><td class="hint" style="margin:0;">'+(x.note||'—')+'</td>';
-      html += '<td class="row-actions"><button class="btn-mini" data-edit-expense="'+x.id+'">Edit</button><button class="btn-mini" data-del-expense="'+x.id+'" style="color:var(--danger)">Del</button></td></tr>';
+      if(String(x.id).indexOf('selfuse-')===0){
+        // Linked to a Shop → Self use entry; changed only from there so stock and cost stay in sync.
+        html += '<td><span class="su-tag">Shop → Self use</span></td></tr>';
+      } else {
+        html += '<td class="row-actions"><button class="btn-mini" data-edit-expense="'+x.id+'">Edit</button><button class="btn-mini" data-del-expense="'+x.id+'" style="color:var(--danger)">Del</button></td></tr>';
+      }
     });
     html += '</table>';
   }
@@ -2334,7 +2525,7 @@ function openDeleteHistConfirm(id){
 }
 
 function downloadBackup(){
-  const payload = { exportedAt: new Date().toISOString(), activeSessions, history, products, sales, expenses, pendingItems, members, membershipPayments };
+  const payload = { exportedAt: new Date().toISOString(), activeSessions, history, products, sales, expenses, selfUse, pendingItems, members, membershipPayments };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2370,9 +2561,11 @@ function openRestoreConfirm(data){
   if(data.products!==undefined) detail += ', '+data.products.length+' products';
   if(data.sales!==undefined) detail += ', '+data.sales.length+' sales';
   if(data.expenses!==undefined) detail += ', '+data.expenses.length+' expenses';
+  if(data.selfUse!==undefined) detail += ', '+data.selfUse.length+' self-use entries';
   if(data.members!==undefined) detail += ', '+data.members.length+' members';
   if(data.membershipPayments!==undefined) detail += ', '+data.membershipPayments.length+' membership payments';
-  const missingNote = (data.products===undefined) ? ' This is an older-format backup, so your current Shop, Expenses and Members data will be left untouched.' : '';
+  let missingNote = (data.products===undefined) ? ' This is an older-format backup, so your current Shop, Expenses and Members data will be left untouched.' : '';
+  if(data.expenses!==undefined && data.selfUse===undefined) missingNote += ' This backup pre-dates Self use, so your current Self use history will be cleared to match its expenses.';
   root.innerHTML = `
     <div class="overlay" id="ovRestore">
       <div class="sheet">
@@ -2393,6 +2586,7 @@ function openRestoreConfirm(data){
       if(data.products!==undefined) payload.products = data.products;
       if(data.sales!==undefined) payload.sales = data.sales;
       if(data.expenses!==undefined) payload.expenses = data.expenses;
+      if(data.selfUse!==undefined) payload.selfUse = data.selfUse;
       if(data.pendingItems!==undefined) payload.pendingItems = data.pendingItems;
       if(data.members!==undefined) payload.members = data.members;
       if(data.membershipPayments!==undefined) payload.membershipPayments = data.membershipPayments;
