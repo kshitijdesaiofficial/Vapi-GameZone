@@ -199,8 +199,7 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
-
+const API_URL ='https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
 }
@@ -1031,7 +1030,14 @@ function openCheckoutModal(id){
         syncOk(); closeModal(); renderCurrentTab();
       }catch(e){
         syncFail(e); restore();
-        showInlineError('checkoutErr', "Couldn't save this — check your connection and try again.");
+        // A message from the server (e.g. "Checkout failed while …") is shown
+        // as-is so the real cause is visible; plain network failures keep the
+        // friendly line. Pressing Confirm again is safe — it never duplicates.
+        const raw = (e && e.message) ? String(e.message) : '';
+        const isNetwork = !raw || /failed to fetch|load failed|networkerror|unexpected token|json/i.test(raw);
+        showInlineError('checkoutErr', isNetwork
+          ? "Couldn't reach the server — check your connection and press Confirm again (it won't create duplicates)."
+          : raw + " — press Confirm again; it won't create duplicates.");
       }
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
