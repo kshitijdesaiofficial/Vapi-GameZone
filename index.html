@@ -53,10 +53,12 @@
   .session-card.glow-xsx{animation:glowXsx 3.4s ease-in-out infinite;}
   .session-card.glow-xox{animation:glowXox 3.4s ease-in-out infinite;}
   .session-card.glow-ps5{animation:glowPs5 3.4s ease-in-out infinite;}
+  .session-card.glow-racing{animation:glowRacing 3.4s ease-in-out infinite;}
   @keyframes glowPc{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(155,123,255,.3),0 0 18px rgba(155,123,255,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(155,123,255,.55),0 0 32px rgba(155,123,255,.32);}}
   @keyframes glowXsx{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(95,211,74,.3),0 0 18px rgba(95,211,74,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(95,211,74,.55),0 0 32px rgba(95,211,74,.32);}}
   @keyframes glowXox{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(242,169,59,.3),0 0 18px rgba(242,169,59,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(242,169,59,.55),0 0 32px rgba(242,169,59,.32);}}
   @keyframes glowPs5{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.3),0 0 18px rgba(47,168,232,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(47,168,232,.55),0 0 32px rgba(47,168,232,.32);}}
+  @keyframes glowRacing{0%,100%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(255,95,162,.3),0 0 18px rgba(255,95,162,.16);}50%{box-shadow:0 8px 28px rgba(0,0,0,.4),0 0 0 1px rgba(255,95,162,.55),0 0 32px rgba(255,95,162,.32);}}
   .session-top{height:4px;}
   .session-body{padding:14px;}
   .session-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
@@ -199,7 +201,8 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL ='https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
+
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
 }
@@ -230,6 +233,9 @@ const SYSTEMS = {
   xsx: { name:'Xbox Series X',   short:'XSX', color:'#5FD34A', max:4, rates:{1:110,2:100,3:80,4:70} },
   xox: { name:'Xbox One X',      short:'XOX', color:'#F2A93B', max:4, rates:{1:110,2:100,3:80,4:70} },
   ps5: { name:'PS5',             short:'PS5', color:'#2FA8E8', max:4, rates:{1:120,2:110,3:100,4:90} },
+  // Single player only. Priced per half-hour block rather than a flat hourly
+  // rate: 30 min = ₹90, 1 hr = ₹160 (so 1.5 hr = ₹250, 2 hr = ₹320 …).
+  racing: { name:'Racing Sim',    short:'SIM', color:'#FF5FA2', max:1, rates:{1:160}, tiered:{ half:90, full:160 } },
 };
 const SYS_KEYS = Object.keys(SYSTEMS);
 const PRODUCT_CATEGORIES = { snack:'Snack', drink:'Drink', other:'Other' };
@@ -299,6 +305,22 @@ function hourlyRate(sysKey, players){
   const sys = SYSTEMS[sysKey];
   if(!sys || !sys.rates[players]) return 0;
   return sys.rates[players] * players;
+}
+// What the gaming time costs. Most systems are simply hours × hourly rate.
+// Tiered systems (Racing Sim) charge in half-hour blocks, rounded up: every
+// full hour is the 'full' price and a leftover half hour is the 'half' price.
+function gamingPrice(sysKey, players, hours){
+  const sys = SYSTEMS[sysKey];
+  if(sys && sys.tiered){
+    const blocks = Math.max(0, Math.ceil(hours*2 - 1e-9));
+    return Math.floor(blocks/2)*sys.tiered.full + (blocks%2)*sys.tiered.half;
+  }
+  return Math.round(hours*hourlyRate(sysKey, players));
+}
+function rateLabel(sysKey, players){
+  const sys = SYSTEMS[sysKey];
+  if(sys && sys.tiered) return money(sys.tiered.half)+' / 30 min · '+money(sys.tiered.full)+' / hr';
+  return money(hourlyRate(sysKey, players))+'/hr';
 }
 function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
 function paymentCell(h){
@@ -587,7 +609,7 @@ function updateLiveMetrics(){
         billEl.style.color = remainingNow < 0 ? 'var(--danger)' : '';
       }
     } else if(billEl){
-      const bill = (billableMs/3600000) * rate;
+      const bill = gamingPrice(el.getAttribute('data-live-sys'), parseInt(el.getAttribute('data-live-players')||'1'), billableMs/3600000);
       billEl.textContent = money(bill);
     }
   });
@@ -652,7 +674,7 @@ function renderActiveTab(){
       const memberRemainingAtStart = member ? hoursRemaining(member) : 0;
       html += '<div class="session-card glow-'+s.sys+'">';
       html += '<div class="session-top" style="background:'+sys.color+'"></div>';
-      html += '<div class="session-body" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+rate+'"'+(isMembership?(' data-live-member-hours="'+memberRemainingAtStart+'"'):'')+'>';
+      html += '<div class="session-body" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+rate+'" data-live-sys="'+s.sys+'" data-live-players="'+s.players+'"'+(isMembership?(' data-live-member-hours="'+memberRemainingAtStart+'"'):'')+'>';
       html += '<div class="session-head"><div class="sys" style="color:'+sys.color+'">'+sys.name+'<span class="badge">'+s.players+' player'+(s.players>1?'s':'')+'</span>'+(isMembership?'<span class="badge" style="color:var(--gold);border-color:var(--gold);">🎫 '+(s.memberName||'Member')+'</span>':'')+'</div><div class="hint mono">from '+fmtTime(s.start)+'</div></div>';
       html += '<div class="session-metrics">';
       html += '<div class="metric"><div class="l"><span class="live-dot"></span>Elapsed</div><div class="v timer-val mono">00:00:00</div></div>';
@@ -691,7 +713,7 @@ function renderActiveTab(){
     const busy = activeSessions.some(s=>s.sys===k);
     html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?('border-color:'+sys.color+';box-shadow:0 0 0 1px '+sys.color+',0 0 18px '+sys.color+'55'):'')+'">';
     html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
-    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">from '+money(sys.rates[1])+'/hr</div>';
+    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(sys.tiered ? (money(sys.tiered.half)+' / 30 min') : ('from '+money(sys.rates[1])+'/hr'))+'</div>';
     html += '</div>';
   });
   html += '</div>';
@@ -720,7 +742,11 @@ function renderActiveTab(){
         html += '<div class="hint">Hours will be deducted from this membership at checkout, not charged. <b class="mono">'+fmtHours(hoursRemaining(chosen))+'</b> currently remaining.</div>';
       }
     } else {
-      html += '<div class="hint">Rate: '+money(sys.rates[newSessionPlayers])+' / player / hr &nbsp;·&nbsp; Total: <b class="mono">'+money(hourlyRate(newSessionSys,newSessionPlayers))+'/hr</b></div>';
+      if(sys.tiered){
+        html += '<div class="hint">Single player only &nbsp;·&nbsp; <b class="mono">'+rateLabel(newSessionSys,1)+'</b></div>';
+      } else {
+        html += '<div class="hint">Rate: '+money(sys.rates[newSessionPlayers])+' / player / hr &nbsp;·&nbsp; Total: <b class="mono">'+money(hourlyRate(newSessionSys,newSessionPlayers))+'/hr</b></div>';
+      }
     }
     html += '<label>Start time</label>';
     html += '<input type="datetime-local" id="startTimeInput" value="'+toLocalInputValue(newSessionCustomStart||Date.now())+'">';
@@ -844,7 +870,7 @@ function openCheckoutModal(id){
     const el = document.getElementById('hoursInput');
     return el ? Math.max(0.25, parseFloat(el.value||suggestedHours)) : suggestedHours;
   }
-  function gamingSubtotal(){ return isMembership ? 0 : Math.round(currentHours()*rate); }
+  function gamingSubtotal(){ return isMembership ? 0 : gamingPrice(s.sys, s.players, currentHours()); }
   function alreadyAdded(){ return pendingItems.filter(pi=>pi.sessionId===s.id); }
   function pendingSubtotal(){ return alreadyAdded().reduce((sum,pi)=>sum+pi.qty*pi.sellPrice,0); }
   function cartSubtotal(){ return cart.reduce((sum,c)=>sum+c.qty*c.sellPrice,0); }
@@ -867,7 +893,7 @@ function openCheckoutModal(id){
           <input type="number" id="hoursInput" step="0.25" min="0.25" value="${currentHours()}">
           <div class="hint">Member has <b class="mono">${fmtHours(memberRemaining)}</b> remaining now — <b class="mono" id="gamingSubHint" style="${afterHours<0?'color:var(--danger);':''}">${fmtHours(afterHours)}</b> left after this session.${afterHours<0?' This goes over their plan — you can still continue, or reduce the hours, or top them up first from the Members tab.':''}</div>
           ` : `
-          <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · rate ${money(rate)}/hr${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
+          <div class="hint">${s.players} player${s.players>1?'s':''} · started ${fmtTime(s.start)} · rate ${rateLabel(s.sys, s.players)}${s.freeMin?(' · '+s.freeMin+' min free given'):''}</div>
           <label>Billable hours</label>
           <input type="number" id="hoursInput" step="0.25" min="0.25" value="${currentHours()}">
           <div class="hint">Gaming subtotal: <b class="mono" id="gamingSubHint">${money(gamingSubtotal())}</b></div>
@@ -1023,7 +1049,7 @@ function openCheckoutModal(id){
       const restore = setButtonBusy(this, 'Saving…');
       try{
         const data = await apiPost('checkoutSession', {
-          id, hours, payment, hourly: rate, cashAmount, onlineAmount,
+          id, hours, payment, hourly: rate, gamingTotal: gamingSubtotal(), cashAmount, onlineAmount,
           items: cart.map(c=>({ productId: c.productId, qty: c.qty }))
         });
         applyState(data);
@@ -2448,9 +2474,8 @@ function openEditHistModal(id){
   const ecCash = document.getElementById('ecCash');
   const ecOnline = document.getElementById('ecOnline');
   function currentEditTotal(){
-    const rate = hourlyRate(h.sys, players);
     const hours = parseFloat(document.getElementById('ehHours').value||h.hours);
-    return Math.round(rate*hours);
+    return gamingPrice(h.sys, players, hours);
   }
   function resetEditSplitDefaults(){
     const t = currentEditTotal();
@@ -2481,14 +2506,14 @@ function openEditHistModal(id){
   document.getElementById('saveEdit').addEventListener('click', async function(){
     const hours = Math.max(0.25, parseFloat(document.getElementById('ehHours').value||h.hours));
     const hourly = hourlyRate(h.sys, players);
-    const total = Math.round(hours*hourly);
+    const total = gamingPrice(h.sys, players, hours);
     let cashAmount, onlineAmount;
     if(payment==='cash'){ cashAmount = total; onlineAmount = 0; }
     else if(payment==='online'){ cashAmount = 0; onlineAmount = total; }
     else { cashAmount = Math.round(parseFloat(ecCash.value||0)); onlineAmount = Math.round(parseFloat(ecOnline.value||0)); }
     const restore = setButtonBusy(this, 'Saving…');
     try{
-      const data = await apiPost('editHistory', { id, players, hours, payment, hourly, cashAmount, onlineAmount });
+      const data = await apiPost('editHistory', { id, players, hours, payment, hourly, total, cashAmount, onlineAmount });
       applyState(data);
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
