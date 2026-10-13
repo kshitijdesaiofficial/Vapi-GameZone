@@ -207,25 +207,69 @@ function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
 }
 
+// ---------- Network layer ----------
+// Phones on shop Wi-Fi/mobile data drop requests, and the Google backend can be
+// briefly busy. So nothing here gives up on the first hiccup: each request has
+// a timeout, is retried automatically with the SAME request id, and the backend
+// ignores a request id it has already carried out — so a retry can never
+// double-save or double-cancel anything.
+const REQUEST_TIMEOUT_MS = 40000;
+const RETRY_DELAYS_MS = [1200, 3000, 6000, 10000];
+let writesInFlight = 0;
+const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
+function newRequestId(){ return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10); }
+function isRetriableError(e){
+  if(!e) return true;
+  if(e.name==='AbortError' || e.name==='TypeError') return true;   // timeout / offline / dropped
+  if(e.isServerError) return /lock|timed? ?out|too many times|service|try again|temporar|internal error|server error/i.test(e.message||'');
+  return true;                                                      // bad/partial response
+}
+async function fetchJson(url, options){
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try{
+    const res = await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
+    const data = await res.json();
+    if(!data.ok){ const err = new Error(data.error || 'Request failed'); err.isServerError = true; throw err; }
+    return data;
+  } finally { clearTimeout(timer); }
+}
+async function withRetries(fn){
+  let lastErr;
+  for(let attempt=0; attempt<=RETRY_DELAYS_MS.length; attempt++){
+    try{ return await fn(); }
+    catch(e){
+      lastErr = e;
+      if(!isRetriableError(e) || attempt===RETRY_DELAYS_MS.length) break;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastErr;
+}
 async function apiGet(action, params){
   const url = new URL(API_URL);
   url.searchParams.set('action', action);
   Object.entries(params||{}).forEach(([k,v])=>url.searchParams.set(k, v));
-  const res = await fetch(url.toString());
-  const data = await res.json();
-  if(!data.ok) throw new Error(data.error || 'Request failed');
-  return data;
+  return fetchJson(url.toString());
 }
 async function apiPost(action, payload){
-  // text/plain avoids a CORS preflight that Apps Script web apps don't handle
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify(Object.assign({action}, payload||{}))
-  });
-  const data = await res.json();
-  if(!data.ok) throw new Error(data.error || 'Request failed');
-  return data;
+  const reqId = newRequestId();   // stays the same across automatic retries
+  const body = JSON.stringify(Object.assign({action, reqId}, payload||{}));
+  writesInFlight++;
+  try{
+    // text/plain avoids a CORS preflight that Apps Script web apps don't handle
+    return await withRetries(()=>fetchJson(API_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body
+    }));
+  } finally { writesInFlight--; }
+}
+// Plain-words reason for a failed save, shown under the button.
+function saveErrorText(e, what){
+  const raw = (e && e.message) ? String(e.message) : '';
+  if(e && e.isServerError && raw) return raw + ' — press the button again; it will not duplicate anything.';
+  return "Still can't reach the server after several tries — check the internet connection, then press the button again. It will not duplicate anything.";
 }
 
 const SYSTEMS = {
@@ -233,9 +277,10 @@ const SYSTEMS = {
   xsx: { name:'Xbox Series X',   short:'XSX', color:'#5FD34A', max:4, rates:{1:110,2:100,3:80,4:70} },
   xox: { name:'Xbox One X',      short:'XOX', color:'#F2A93B', max:4, rates:{1:110,2:100,3:80,4:70} },
   ps5: { name:'PS5',             short:'PS5', color:'#2FA8E8', max:4, rates:{1:120,2:110,3:100,4:90} },
-  // Single player only. Priced per half-hour block rather than a flat hourly
-  // rate: 30 min = ₹90, 1 hr = ₹160 (so 1.5 hr = ₹250, 2 hr = ₹320 …).
-  racing: { name:'Racing Sim',    short:'SIM', color:'#FF5FA2', max:1, rates:{1:160}, tiered:{ half:90, full:160 } },
+  // Single player only. Not a flat hourly rate: 15 min = ₹50, 30 min = ₹90,
+  // 1 hr = ₹160. Time is rounded up to the next 15 min, so 45 min = ₹140
+  // (30 + 15), 1 hr 15 = ₹210, 1.5 hr = ₹250, 2 hr = ₹320 …
+  racing: { name:'Racing Sim',    short:'SIM', color:'#FF5FA2', max:1, rates:{1:160}, tiered:{ quarter:50, half:90, full:160 } },
 };
 const SYS_KEYS = Object.keys(SYSTEMS);
 const PRODUCT_CATEGORIES = { snack:'Snack', drink:'Drink', other:'Other' };
@@ -277,6 +322,8 @@ let products = [];
 let sales = [];
 let expenses = [];
 let selfUse = [];
+let dataVersion = '';
+let pollCount = 0, pollBusy = false;
 let pendingItems = [];
 let members = [];
 let membershipPayments = [];
@@ -307,19 +354,22 @@ function hourlyRate(sysKey, players){
   return sys.rates[players] * players;
 }
 // What the gaming time costs. Most systems are simply hours × hourly rate.
-// Tiered systems (Racing Sim) charge in half-hour blocks, rounded up: every
-// full hour is the 'full' price and a leftover half hour is the 'half' price.
+// Tiered systems (Racing Sim) round up to the next 15 min: every full hour is
+// the 'full' price, and the leftover 15/30/45 min uses the quarter/half price
+// (45 min is quarter+half, or a full hour if that is ever cheaper).
 function gamingPrice(sysKey, players, hours){
   const sys = SYSTEMS[sysKey];
   if(sys && sys.tiered){
-    const blocks = Math.max(0, Math.ceil(hours*2 - 1e-9));
-    return Math.floor(blocks/2)*sys.tiered.full + (blocks%2)*sys.tiered.half;
+    const t = sys.tiered;
+    const q = Math.max(0, Math.ceil(hours*4 - 1e-9));          // 15-min blocks, rounded up
+    const rest = [0, t.quarter, t.half, Math.min(t.full, t.quarter + t.half)];
+    return Math.floor(q/4)*t.full + rest[q%4];
   }
   return Math.round(hours*hourlyRate(sysKey, players));
 }
 function rateLabel(sysKey, players){
   const sys = SYSTEMS[sysKey];
-  if(sys && sys.tiered) return money(sys.tiered.half)+' / 30 min · '+money(sys.tiered.full)+' / hr';
+  if(sys && sys.tiered) return money(sys.tiered.quarter)+' / 15 min · '+money(sys.tiered.half)+' / 30 min · '+money(sys.tiered.full)+' / hr';
   return money(hourlyRate(sysKey, players))+'/hr';
 }
 function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
@@ -473,7 +523,7 @@ function openPaymentQrSettingsModal(){
         applyState(data); syncOk(); render();
       }catch(err){
         syncFail(err); restore();
-        showInlineError('qrSettingsErr', "Couldn't remove it — check your connection and try again.");
+        showInlineError('qrSettingsErr', saveErrorText(err));
       }
     });
   }
@@ -524,6 +574,7 @@ function applyState(data){
   pendingItems = data.pendingItems||[];
   members = data.members||[]; membershipPayments = data.membershipPayments||[];
   settings = data.settings||{};
+  dataVersion = data.dataVersion||'';
 }
 
 async function initialLoad(){
@@ -534,8 +585,18 @@ async function initialLoad(){
   }catch(e){ syncFail(e); }
 }
 async function pollState(){
+  // Don't pile requests on the backend: skip if one is already running, if a
+  // save is in progress, or if this tab isn't even visible.
+  if(pollBusy || writesInFlight>0 || document.hidden) return;
+  pollBusy = true;
   try{
-    const data = await apiGet('getAll');
+    pollCount++;
+    // Usually just ask "has anything changed?" (tiny reply). Every 6th poll
+    // fetches everything anyway, so edits made directly in the Sheet appear too.
+    const quick = dataVersion && (pollCount % 6 !== 0);
+    const data = await apiGet('getAll', quick ? { since: dataVersion } : {});
+    if(data.unchanged){ syncOk(); return; }
+    if(writesInFlight>0) return;   // a save started meanwhile — its reply is newer
     const changed = JSON.stringify(data.activeSessions)!==JSON.stringify(activeSessions) ||
       JSON.stringify(data.history)!==JSON.stringify(history) ||
       JSON.stringify(data.products)!==JSON.stringify(products) ||
@@ -552,9 +613,12 @@ async function pollState(){
       // data is still refreshed underneath, it'll just render on the next
       // safe opportunity (they finish, submit, or switch tabs).
       if(!userIsEditingCurrentTab()) renderCurrentTab();
+    } else {
+      dataVersion = data.dataVersion||dataVersion;
     }
     syncOk();
   }catch(e){ syncFail(e); }
+  finally { pollBusy = false; }
 }
 function userIsEditingCurrentTab(){
   const active = document.activeElement;
@@ -713,7 +777,7 @@ function renderActiveTab(){
     const busy = activeSessions.some(s=>s.sys===k);
     html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?('border-color:'+sys.color+';box-shadow:0 0 0 1px '+sys.color+',0 0 18px '+sys.color+'55'):'')+'">';
     html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
-    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(sys.tiered ? (money(sys.tiered.half)+' / 30 min') : ('from '+money(sys.rates[1])+'/hr'))+'</div>';
+    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(sys.tiered ? (money(sys.tiered.quarter)+' / 15 min') : ('from '+money(sys.rates[1])+'/hr'))+'</div>';
     html += '</div>';
   });
   html += '</div>';
@@ -842,7 +906,7 @@ async function startSession(){
     renderActiveTab();
   }catch(e){
     syncFail(e); restore();
-    showInlineError('startErr', "Couldn't reach the server — check your connection and try again.");
+    showInlineError('startErr', saveErrorText(e));
   }
 }
 
@@ -1059,11 +1123,8 @@ function openCheckoutModal(id){
         // A message from the server (e.g. "Checkout failed while …") is shown
         // as-is so the real cause is visible; plain network failures keep the
         // friendly line. Pressing Confirm again is safe — it never duplicates.
-        const raw = (e && e.message) ? String(e.message) : '';
-        const isNetwork = !raw || /failed to fetch|load failed|networkerror|unexpected token|json/i.test(raw);
-        showInlineError('checkoutErr', isNetwork
-          ? "Couldn't reach the server — check your connection and press Confirm again (it won't create duplicates)."
-          : raw + " — press Confirm again; it won't create duplicates.");
+        showInlineError('checkoutErr', saveErrorText(e));
+        pollState();
       }
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1096,7 +1157,8 @@ function openCancelConfirm(id){
       syncOk(); closeModal(); renderCurrentTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('cancelErr', "Couldn't reach the server — try again.");
+      showInlineError('cancelErr', saveErrorText(e));
+      pollState();
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1144,7 +1206,7 @@ function openAddItemModal(sessionId){
         syncOk(); closeModal(); renderActiveTab();
       }catch(e){
         syncFail(e); restore();
-        showInlineError('addItemErr', "Couldn't save — check your connection and try again.");
+        showInlineError('addItemErr', saveErrorText(e));
       }
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1303,7 +1365,7 @@ function openAddMemberModal(){
         syncOk(); closeModal(); renderMembersTab();
       }catch(e){
         syncFail(e); restore();
-        showInlineError('addMemberErr', "Couldn't save — check your connection and try again.");
+        showInlineError('addMemberErr', saveErrorText(e));
       }
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1371,7 +1433,7 @@ function openTopUpModal(memberId){
         syncOk(); closeModal(); renderMembersTab();
       }catch(e){
         syncFail(e); restore();
-        showInlineError('topUpErr', "Couldn't save — check your connection and try again.");
+        showInlineError('topUpErr', saveErrorText(e));
       }
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1415,7 +1477,7 @@ function openEditMemberModal(id){
       syncOk(); closeModal(); renderMembersTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('editMemberErr', "Couldn't save — check your connection and try again.");
+      showInlineError('editMemberErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1447,7 +1509,7 @@ function openDeleteMemberConfirm(id){
       syncOk(); closeModal(); renderMembersTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('delMemberErr', "Couldn't reach the server — try again.");
+      showInlineError('delMemberErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1636,7 +1698,7 @@ function attachShopHandlers(){
       syncOk(); showAddProduct = false; newProductImageData=''; renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('addProductErr', "Couldn't save — check your connection and try again.");
+      showInlineError('addProductErr', saveErrorText(e));
     }
   });
 }
@@ -1679,7 +1741,7 @@ function openSellModal(productId){
         syncOk(); closeModal(); renderCurrentTab();
       }catch(e){
         syncFail(e); restore();
-        showInlineError('sellErr', "Couldn't save this — check your connection and try again.");
+        showInlineError('sellErr', saveErrorText(e));
       }
     });
     document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1719,7 +1781,7 @@ function openRestockModal(id){
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('restockErr', "Couldn't save — check your connection and try again.");
+      showInlineError('restockErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1785,7 +1847,7 @@ function openEditProductModal(id){
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('editProductErr', "Couldn't save — check your connection and try again.");
+      showInlineError('editProductErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1817,7 +1879,7 @@ function openDeleteProductConfirm(id){
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('delProductErr', "Couldn't reach the server — try again.");
+      showInlineError('delProductErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1847,7 +1909,7 @@ function openDeleteSaleConfirm(id){
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('delSaleErr', "Couldn't reach the server — try again.");
+      showInlineError('delSaleErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1931,7 +1993,7 @@ function openSelfUseModal(){
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('suErr', "Couldn't save — check your connection and try again.");
+      showInlineError('suErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -1972,7 +2034,7 @@ function openDeleteSelfUseConfirm(id){
       syncOk(); closeModal(); renderShopTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('delSelfUseErr', "Couldn't reach the server — try again.");
+      showInlineError('delSelfUseErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2057,7 +2119,7 @@ function attachExpensesHandlers(){
       syncOk(); expenseCustomCategory=false; renderExpensesTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('addExpenseErr', "Couldn't save — check your connection and try again.");
+      showInlineError('addExpenseErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-edit-expense]').forEach(b=>b.addEventListener('click', ()=>openEditExpenseModal(b.getAttribute('data-edit-expense'))));
@@ -2102,7 +2164,7 @@ function openEditExpenseModal(id){
       syncOk(); closeModal(); renderExpensesTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('editExpenseErr', "Couldn't save — check your connection and try again.");
+      showInlineError('editExpenseErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2132,7 +2194,7 @@ function openDeleteExpenseConfirm(id){
       syncOk(); closeModal(); renderExpensesTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('delExpenseErr', "Couldn't reach the server — try again.");
+      showInlineError('delExpenseErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2426,7 +2488,7 @@ function openEditMembershipHistModal(h, sys){
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('editMemHistErr', "Couldn't save — check your connection and try again.");
+      showInlineError('editMemHistErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2518,7 +2580,7 @@ function openEditHistModal(id){
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('editErr', "Couldn't save — check your connection and try again.");
+      showInlineError('editErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2548,7 +2610,7 @@ function openDeleteHistConfirm(id){
       syncOk(); closeModal(); renderHistoryTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('deleteErr', "Couldn't reach the server — try again.");
+      showInlineError('deleteErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2626,7 +2688,7 @@ function openRestoreConfirm(data){
       syncOk(); closeModal(); renderCurrentTab();
     }catch(e){
       syncFail(e); restore();
-      showInlineError('restoreConfirmErr', "Couldn't reach the server — try again.");
+      showInlineError('restoreConfirmErr', saveErrorText(e));
     }
   });
   document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
@@ -2684,7 +2746,7 @@ function showSetupBanner(){
   try{ renderActiveTab(); }catch(e){ console.error('initial render failed', e); }
   tickClock();
   setInterval(tickClock, 1000);
-  setInterval(pollState, 6000);
+  setInterval(pollState, 8000);
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') pollState(); });
   window.addEventListener('focus', pollState);
   document.getElementById('paymentQrSettingsBtn').addEventListener('click', openPaymentQrSettingsModal);
