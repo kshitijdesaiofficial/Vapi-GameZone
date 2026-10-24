@@ -282,13 +282,13 @@ function saveErrorText(e, what){
 
 const SYSTEMS = {
   pc:  { name:'Gaming PC',       short:'PC',  color:'#9B7BFF', max:2, rates:{1:120,2:100} },
-  xsx: { name:'Xbox Series X',   short:'XSX', color:'#5FD34A', max:7, rates:{1:110,2:100,3:80,4:70,5:70,6:70,7:70} },
-  xox: { name:'Xbox One X',      short:'XOX', color:'#F2A93B', max:4, rates:{1:90,2:80,3:70,4:60} },
-  ps5: { name:'PS5',             short:'PS5', color:'#2FA8E8', max:4, rates:{1:120,2:110,3:100,4:90} },
+  xsx: { name:'Xbox Series X',   short:'XSX', color:'#5FD34A', max:7, rates:{1:100,2:75,3:60,4:50,5:50,6:50,7:50} },
+  xox: { name:'Xbox One X',      short:'XOX', color:'#F2A93B', max:2, rates:{1:80,2:60} },
+  ps5: { name:'PS5',             short:'PS5', color:'#2FA8E8', max:4, rates:{1:100,2:80,3:70,4:60} },
   // Single player only. Not a flat hourly rate: 15 min = ₹50, 30 min = ₹90,
   // 1 hr = ₹160. Time is rounded up to the next 15 min, so 45 min = ₹140
   // (30 + 15), 1 hr 15 = ₹210, 1.5 hr = ₹250, 2 hr = ₹320 …
-  racing: { name:'Racing Sim',    short:'SIM', color:'#FF5FA2', max:1, rates:{1:160}, tiered:{ quarter:50, half:90, full:160 } },
+  racing: { name:'Racing Sim',    short:'SIM', color:'#FF5FA2', max:1, rates:{1:100}, tiered:{ half:70, full:100 } },
 };
 const SYS_KEYS = Object.keys(SYSTEMS);
 const PRODUCT_CATEGORIES = { snack:'Snack', drink:'Drink', other:'Other' };
@@ -358,26 +358,32 @@ function membersWithHoursLeft(){ return members.filter(m=>hoursRemaining(m)>0); 
 
 function hourlyRate(sysKey, players){
   const sys = SYSTEMS[sysKey];
-  if(!sys || !sys.rates[players]) return 0;
-  return sys.rates[players] * players;
+  if(!sys) return 0;
+  // Safety net only (no listed price changes): a session logged with more players
+  // than a system now allows uses its highest listed rate instead of ₹0.
+  let per = sys.rates[players];
+  if(!per){
+    const known = Object.keys(sys.rates).map(Number).filter(n=>n<=players).sort((x,y)=>y-x);
+    per = known.length ? sys.rates[known[0]] : 0;
+  }
+  return per * players;
 }
 // What the gaming time costs. Most systems are simply hours × hourly rate.
-// Tiered systems (Racing Sim) round up to the next 15 min: every full hour is
-// the 'full' price, and the leftover 15/30/45 min uses the quarter/half price
-// (45 min is quarter+half, or a full hour if that is ever cheaper).
+// Tiered systems (Racing Sim) are charged in half-hour blocks, rounded up:
+// every full hour is the 'full' price and a leftover half hour is the 'half'
+// price (so 15 or 30 min = half, 45 min or 1 hr = full, 1.5 hr = full + half).
 function gamingPrice(sysKey, players, hours){
   const sys = SYSTEMS[sysKey];
   if(sys && sys.tiered){
     const t = sys.tiered;
-    const q = Math.max(0, Math.ceil(hours*4 - 1e-9));          // 15-min blocks, rounded up
-    const rest = [0, t.quarter, t.half, Math.min(t.full, t.quarter + t.half)];
-    return Math.floor(q/4)*t.full + rest[q%4];
+    const blocks = Math.max(0, Math.ceil(hours*2 - 1e-9));     // 30-min blocks, rounded up
+    return Math.floor(blocks/2)*t.full + (blocks%2)*t.half;
   }
   return Math.round(hours*hourlyRate(sysKey, players));
 }
 function rateLabel(sysKey, players){
   const sys = SYSTEMS[sysKey];
-  if(sys && sys.tiered) return money(sys.tiered.quarter)+' / 15 min · '+money(sys.tiered.half)+' / 30 min · '+money(sys.tiered.full)+' / hr';
+  if(sys && sys.tiered) return money(sys.tiered.half)+' / 30 min · '+money(sys.tiered.full)+' / hr';
   return money(hourlyRate(sysKey, players))+'/hr';
 }
 function money(n){ return '₹' + Math.round(n).toLocaleString('en-IN'); }
@@ -785,7 +791,7 @@ function renderActiveTab(){
     const busy = activeSessions.some(s=>s.sys===k);
     html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?('border-color:'+sys.color+';box-shadow:0 0 0 1px '+sys.color+',0 0 18px '+sys.color+'55'):'')+'">';
     html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
-    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(sys.tiered ? (money(sys.tiered.quarter)+' / 15 min') : ('from '+money(sys.rates[1])+'/hr'))+'</div>';
+    html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(sys.tiered ? (money(sys.tiered.half)+' / 30 min') : ('from '+money(sys.rates[1])+'/hr'))+'</div>';
     html += '</div>';
   });
   html += '</div>';
