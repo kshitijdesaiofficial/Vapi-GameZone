@@ -117,6 +117,14 @@
   .metric .l{font-size:11px;color:var(--muted);font-weight:500;}
   .metric .v{font-family:'Oxanium',sans-serif;font-size:19px;font-weight:700;margin-top:2px;}
   .metric .v.gold{color:var(--gold);text-shadow:0 0 16px rgba(255,216,74,.50);}
+  .group-card .session-top{background:linear-gradient(90deg,var(--cyan,#19e6ff),var(--magenta,#ff2bd6))}
+  .grp-row{border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;margin-bottom:10px;background:rgba(255,255,255,.03);}
+  .grp-row .grp-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;}
+  .grp-row .grp-nums{display:flex;gap:14px;font-size:13px;align-items:center;}
+  .multi-line{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;}
+  .bk-screens{font-size:12.5px;color:var(--muted);margin-top:2px;}
+  .bk-scr-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+  .bk-scr-row select{flex:1;min-width:0}
   .free-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:10px;}
   .pending-items{margin:-4px 0 10px;padding:2px 0 2px 10px;border-left:2px solid var(--magenta);box-shadow:-6px 0 14px -8px var(--magenta);}
   .pending-item-row{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--muted);padding:3px 0;}
@@ -316,7 +324,7 @@
 // 1) BACKEND CONNECTION — paste your Apps Script Web App URL below.
 //    See gamezone-backend.gs for the script and setup steps.
 // ======================================================================
-const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec'; 
+const API_URL = 'https://script.google.com/macros/s/AKfycbyf2pA6DT5q8i22ml56ziuBISD1NSX0VO08ZAMca574P4hZNCQdgVRMp5zNJ7p7SyhwHg/exec';
 
 function isConfigured(){
   return typeof API_URL === 'string' && API_URL.indexOf('http') === 0 && API_URL.indexOf('PASTE_YOUR') === -1;
@@ -449,6 +457,8 @@ let newSessionPlayers = 1;
 let newSessionCustomStart = null;
 let newSessionMemberId = null;
 let newSessionMemberName = null;
+let multiMode = false;
+let multiSel = {};   // sys -> players, for starting several screens as one group
 let lastSyncTime = null;
 let syncFailStreak = 0;
 
@@ -799,6 +809,18 @@ function updateLiveMetrics(){
     } else if(billEl){
       const bill = gamingPrice(el.getAttribute('data-live-sys'), parseInt(el.getAttribute('data-live-players')||'1'), billableMs/3600000);
       billEl.textContent = money(bill);
+      el.setAttribute('data-bill-now', bill);
+    }
+  });
+  document.querySelectorAll('[data-group-live]').forEach(g=>{
+    let sum = 0, earliest = Infinity;
+    g.querySelectorAll('[data-bill-now]').forEach(r=>{ sum += parseFloat(r.getAttribute('data-bill-now'))||0; });
+    g.querySelectorAll('[data-live-start]').forEach(r=>{ earliest = Math.min(earliest, parseInt(r.getAttribute('data-live-start'))); });
+    const t = g.querySelector('.group-total'); if(t) t.textContent = money(sum);
+    const e = g.querySelector('.group-timer');
+    if(e && isFinite(earliest)){
+      const ms = Date.now()-earliest;
+      e.textContent = pad(Math.floor(ms/3600000))+':'+pad(Math.floor((ms%3600000)/60000))+':'+pad(Math.floor((ms%60000)/1000));
     }
   });
 }
@@ -832,6 +854,40 @@ function renderCurrentTab(){
 }
 
 // ---------- ACTIVE TAB ----------
+function groupCardHtml(gid, list){
+  const booking = list[0].bookingId ? bookings.find(b=>b.id===list[0].bookingId) : null;
+  const sorted = list.slice().sort((a,b)=>Object.keys(SYSTEMS).indexOf(a.sys)-Object.keys(SYSTEMS).indexOf(b.sys));
+  let h = '<div class="session-card group-card"><div class="session-top"></div>';
+  h += '<div class="session-body" data-group-live="'+suEsc(gid)+'">';
+  h += '<div class="session-head"><div class="sys" style="color:var(--gold)">Group · '+list.length+' screen'+(list.length>1?'s':'')+(booking?'<span class="badge">📅 '+suEsc(booking.name||'Booking')+'</span>':'')+'</div><div class="hint mono">from '+fmtTime(Math.min(...list.map(x=>x.start)))+'</div></div>';
+  h += '<div class="session-metrics">';
+  h += '<div class="metric"><div class="l"><span class="live-dot"></span>Elapsed</div><div class="v group-timer mono">00:00:00</div></div>';
+  h += '<div class="metric"><div class="l">Combined live bill</div><div class="v gold group-total mono">'+money(0)+'</div></div>';
+  h += '</div>';
+  let snacks = 0;
+  sorted.forEach(s=>{
+    const sys = SYSTEMS[s.sys];
+    const items = pendingItems.filter(pi=>pi.sessionId===s.id);
+    const itemsTotal = items.reduce((n,pi)=>n+pi.qty*pi.sellPrice,0); snacks += itemsTotal;
+    if(!sys){ h += '<div class="grp-row"><div class="hint">Unrecognized console "'+suEsc(s.sys)+'"</div></div>'; return; }
+    h += '<div class="grp-row" style="border-color:'+sys.color+'55" data-live-start="'+s.start+'" data-live-free="'+(s.freeMin||0)+'" data-live-rate="'+hourlyRate(s.sys,s.players)+'" data-live-sys="'+s.sys+'" data-live-players="'+s.players+'">';
+    h += '<div class="grp-top"><div class="sys" style="color:'+sys.color+';font-weight:700">'+sys.name+'<span class="badge">'+s.players+'p</span></div>';
+    h += '<div class="grp-nums mono"><span class="timer-val">00:00:00</span><b class="gold bill-val">'+money(0)+'</b></div></div>';
+    h += '<div class="free-row"><span>Free time: <b class="mono">'+(s.freeMin||0)+' min</b></span><button class="btn-mini" data-add-free="'+s.id+'">+15 min free</button></div>';
+    h += '<div class="free-row" style="margin-bottom:0"><span>Snacks: <b class="mono">'+money(itemsTotal)+'</b></span><button class="btn-mini" data-add-item="'+s.id+'">+ Add item</button></div>';
+    if(items.length){
+      h += '<div class="pending-items" style="margin-top:8px">';
+      items.forEach(pi=>{ h += '<div class="pending-item-row"><span>'+pi.qty+'× '+pi.name+' <span class="mono">('+money(pi.qty*pi.sellPrice)+')</span></span><button class="btn-mini" data-remove-pending="'+pi.id+'" style="color:var(--danger)">×</button></div>'; });
+      h += '</div>';
+    }
+    h += '</div>';
+  });
+  if(booking && bookingAdvance(booking)>0) h += '<div class="hint">Booking advance of <b class="mono">'+money(bookingAdvance(booking))+'</b> will be credited at checkout.</div>';
+  h += '<div class="btn-row"><button class="action btn-primary" data-checkout-group="'+suEsc(gid)+'">Checkout all</button><button class="action btn-danger" data-cancel-group="'+suEsc(gid)+'">Cancel all</button></div>';
+  h += '</div></div>';
+  return h;
+}
+
 function renderActiveTab(){
   const el = document.getElementById('tab-active');
   const todayEntries = history.filter(h=>h.date===todayKey());
@@ -846,7 +902,11 @@ function renderActiveTab(){
   if(activeSessions.length===0){
     html += '<div class="card empty">No consoles running right now.<br>Start a session below when a customer sits down.</div>';
   } else {
-    activeSessions.slice().sort((a,b)=>b.start-a.start).forEach(s=>{
+    const groups = {};
+    activeSessions.forEach(s=>{ if(s.groupId){ (groups[s.groupId] = groups[s.groupId]||[]).push(s); } });
+    Object.keys(groups).sort((a,b)=>Math.min(...groups[b].map(x=>x.start))-Math.min(...groups[a].map(x=>x.start)))
+      .forEach(gid=>{ html += groupCardHtml(gid, groups[gid]); });
+    activeSessions.filter(s=>!s.groupId).sort((a,b)=>b.start-a.start).forEach(s=>{
       const sys = SYSTEMS[s.sys];
       if(!sys){
         html += '<div class="session-card">';
@@ -896,10 +956,19 @@ function renderActiveTab(){
   html += '<div class="divider"></div>';
   html += '<div class="card">';
   html += '<div class="section-title">Start a session</div>';
+  html += '<div class="pay-toggle" style="margin-bottom:12px;"><button data-start-mode="single" class="'+(!multiMode?'selected':'')+'">One screen</button><button data-start-mode="multi" class="'+(multiMode?'selected':'')+'">Multiple screens</button></div>';
   html += '<div class="tiles" id="sysTiles">';
   SYS_KEYS.forEach(k=>{
     const sys = SYSTEMS[k];
     const busy = activeSessions.some(s=>s.sys===k);
+    if(multiMode){
+      const on = multiSel[k]!==undefined;
+      html += '<div class="tile '+(on?'selected':'')+' '+(busy?'disabled':'')+'" data-multi-pick="'+k+'" style="'+(on?('border-color:'+sys.color+';box-shadow:0 0 0 1px '+sys.color+',0 0 18px '+sys.color+'55'):'')+'">';
+      html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
+      html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(on?('✓ '+multiSel[k]+' player'+(multiSel[k]>1?'s':'')):(sys.tiered ? (money(sys.tiered.half)+' / 30 min') : ('from '+money(sys.rates[1])+'/hr')))+'</div>';
+      html += '</div>';
+      return;
+    }
     html += '<div class="tile '+(newSessionSys===k?'selected':'')+' '+(busy?'disabled':'')+'" data-pick-sys="'+k+'" style="'+(newSessionSys===k?('border-color:'+sys.color+';box-shadow:0 0 0 1px '+sys.color+',0 0 18px '+sys.color+'55'):'')+'">';
     html += '<div class="name" style="color:'+sys.color+'">'+sys.short+'</div>';
     html += busy ? '<div class="inuse">In use</div>' : '<div class="sub">'+(sys.tiered ? (money(sys.tiered.half)+' / 30 min') : ('from '+money(sys.rates[1])+'/hr'))+'</div>';
@@ -907,7 +976,22 @@ function renderActiveTab(){
   });
   html += '</div>';
 
-  if(newSessionSys){
+  if(multiMode){
+    const ks = SYS_KEYS.filter(k=>multiSel[k]!==undefined);
+    if(!ks.length) html += '<div class="hint">Tap two or more consoles above. Each gets its own player count; they run as one group with one combined bill.</div>';
+    ks.forEach(k=>{
+      const sys = SYSTEMS[k];
+      html += '<div class="multi-line"><div style="color:'+sys.color+';font-weight:700">'+sys.name+'<div class="hint mono" style="font-weight:400">'+money(hourlyRate(k,multiSel[k]))+'/hr</div></div>';
+      html += '<div class="stepper"><button data-multi-dec="'+k+'">−</button><div class="n mono">'+multiSel[k]+'</div><button data-multi-inc="'+k+'">+</button></div></div>';
+    });
+    if(ks.length){
+      const perHr = ks.reduce((n,k)=>n+hourlyRate(k,multiSel[k]),0);
+      html += '<div class="hint">Pay per hour · combined <b class="mono">'+money(perHr)+'/hr</b></div>';
+      html += '<label>Start time</label><input type="datetime-local" id="startTimeInput" value="'+toLocalInputValue(newSessionCustomStart||Date.now())+'">';
+      html += '<div style="margin-top:14px;"><button class="action btn-primary" id="startGroupBtn" style="width:100%">Start '+ks.length+' screen'+(ks.length>1?'s':'')+' together</button></div>';
+      html += '<div class="err-text" id="startErr"></div>';
+    }
+  } else if(newSessionSys){
     const sys = SYSTEMS[newSessionSys];
     if(newSessionPlayers > sys.max) newSessionPlayers = sys.max;
     html += '<label>Players</label>';
@@ -951,6 +1035,23 @@ function renderActiveTab(){
 }
 
 function attachActiveHandlers(){
+  document.querySelectorAll('[data-start-mode]').forEach(b=>b.addEventListener('click', ()=>{
+    multiMode = b.getAttribute('data-start-mode')==='multi';
+    newSessionSys = null; newSessionPlayers = 1; newSessionMemberId = null; newSessionMemberName = null;
+    renderActiveTab();
+  }));
+  document.querySelectorAll('[data-multi-pick]').forEach(t=>t.addEventListener('click', ()=>{
+    const k = t.getAttribute('data-multi-pick');
+    if(activeSessions.some(s=>s.sys===k)) return;
+    if(multiSel[k]!==undefined) delete multiSel[k]; else multiSel[k] = 1;
+    renderActiveTab();
+  }));
+  document.querySelectorAll('[data-multi-dec]').forEach(b=>b.addEventListener('click', ()=>{ const k=b.getAttribute('data-multi-dec'); if(multiSel[k]>1){ multiSel[k]--; renderActiveTab(); } }));
+  document.querySelectorAll('[data-multi-inc]').forEach(b=>b.addEventListener('click', ()=>{ const k=b.getAttribute('data-multi-inc'); if(multiSel[k]<SYSTEMS[k].max){ multiSel[k]++; renderActiveTab(); } }));
+  const sgb = document.getElementById('startGroupBtn');
+  if(sgb) sgb.addEventListener('click', startGroupFromTiles);
+  document.querySelectorAll('[data-checkout-group]').forEach(b=>b.addEventListener('click', ()=>openGroupCheckoutModal(b.getAttribute('data-checkout-group'))));
+  document.querySelectorAll('[data-cancel-group]').forEach(b=>b.addEventListener('click', ()=>openGroupCancelConfirm(b.getAttribute('data-cancel-group'))));
   document.querySelectorAll('[data-pick-sys]').forEach(t=>t.addEventListener('click', ()=>{
     const k = t.getAttribute('data-pick-sys');
     if(activeSessions.some(s=>s.sys===k)) return;
@@ -1033,6 +1134,194 @@ async function startSession(){
     syncFail(e); restore();
     showInlineError('startErr', saveErrorText(e));
   }
+}
+
+async function startGroupFromTiles(){
+  const btn = document.getElementById('startGroupBtn');
+  const ks = SYS_KEYS.filter(k=>multiSel[k]!==undefined);
+  if(!ks.length) return;
+  const restore = setButtonBusy(btn, 'Starting…');
+  const start = newSessionCustomStart || Date.now();
+  try{
+    const data = await apiPost('startGroup', {
+      groupId: 'g-'+uid(), start, bookingId: '',
+      screens: ks.map(k=>({ id: uid(), sys: k, players: multiSel[k] }))
+    });
+    applyState(data); syncOk();
+    multiSel = {}; multiMode = false; newSessionCustomStart = null;
+    renderActiveTab();
+  }catch(e){
+    syncFail(e); restore();
+    showInlineError('startErr', saveErrorText(e));
+  }
+}
+
+async function startBookingNow(bookingId, btn){
+  const b = bookings.find(x=>x.id===bookingId); if(!b) return;
+  const scr = bookingScreens(b);
+  const busy = scr.filter(sc=>activeSessions.some(s=>s.sys===sc.sys));
+  if(busy.length){
+    alert((busy.map(sc=>SYSTEMS[sc.sys]?SYSTEMS[sc.sys].name:sc.sys).join(', '))+' '+(busy.length>1?'are':'is')+' already running. Finish or checkout first, then start this booking.');
+    return;
+  }
+  const restore = setButtonBusy(btn, 'Starting…');
+  try{
+    const data = await apiPost('startGroup', {
+      groupId: 'g-'+uid(), start: Date.now(), bookingId,
+      screens: scr.map(sc=>({ id: uid(), sys: sc.sys, players: sc.players }))
+    });
+    applyState(data); syncOk();
+    currentTab = 'active';
+    document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('active', x.getAttribute('data-tab')==='active'));
+    ['active','bookings','shop','members','expenses','daily','monthly','history'].forEach(t=>{ document.getElementById('tab-'+t).hidden = (t!=='active'); });
+    renderActiveTab();
+  }catch(e){ syncFail(e); restore(); alert(saveErrorText(e)); }
+}
+
+function openGroupCancelConfirm(gid){
+  const list = activeSessions.filter(s=>s.groupId===gid); if(!list.length) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="overlay" id="ovGc"><div class="sheet">
+      <button class="close-x" data-close>✕</button>
+      <h3>Cancel all ${list.length} screens?</h3>
+      <div class="hint">Nothing is billed or saved to History. Snacks added to these screens go back into stock.</div>
+      <div class="btn-row" style="margin-top:16px;"><button class="action btn-ghost" data-close>Keep running</button><button class="action btn-danger" id="gcYes">Cancel all</button></div>
+      <div class="err-text" id="gcErr"></div>
+    </div></div>`;
+  document.getElementById('gcYes').addEventListener('click', async function(){
+    const restore = setButtonBusy(this, 'Cancelling…');
+    try{ const data = await apiPost('cancelGroup', { groupId: gid }); applyState(data); syncOk(); closeModal(); renderCurrentTab(); }
+    catch(e){ syncFail(e); restore(); showInlineError('gcErr', saveErrorText(e)); }
+  });
+  root.querySelectorAll('[data-close]').forEach(x=>x.addEventListener('click', closeModal));
+  document.getElementById('ovGc').addEventListener('click', e=>{ if(e.target.id==='ovGc') closeModal(); });
+}
+
+function openGroupCheckoutModal(gid){
+  const list = activeSessions.filter(s=>s.groupId===gid && SYSTEMS[s.sys]);
+  if(!list.length) return;
+  const booking = list[0].bookingId ? bookings.find(b=>b.id===list[0].bookingId) : null;
+  const advance = booking ? bookingAdvance(booking) : 0;
+  const hours = {};
+  list.forEach(s=>{
+    const billable = Math.max(0, (Date.now()-s.start)/60000 - (s.freeMin||0));
+    hours[s.id] = Math.max(0.25, Math.ceil(billable/15)*15/60);
+  });
+  let payment = 'cash', cart = [], pendingProductId = '', pendingQty = 1;
+  const root = document.getElementById('modal-root');
+  const gaming = s=>gamingPrice(s.sys, s.players, hours[s.id]);
+  const gamingSum = ()=>list.reduce((n,s)=>n+gaming(s),0);
+  const pendingList = ()=>pendingItems.filter(pi=>list.some(s=>s.id===pi.sessionId));
+  const pendingSum = ()=>pendingList().reduce((n,pi)=>n+pi.qty*pi.sellPrice,0);
+  const cartSum = ()=>cart.reduce((n,c)=>n+c.qty*c.sellPrice,0);
+  const grand = ()=>gamingSum()+pendingSum()+cartSum();
+  const credit = ()=>Math.min(advance, grand());
+  const due = ()=>grand()-credit();
+
+  function onlineNow(){
+    if(payment==='online') return due();
+    if(payment==='split'){ const oi=document.getElementById('onlineAmountInput'); return oi ? (parseFloat(oi.value)||0) : 0; }
+    return 0;
+  }
+  function updateQr(){ const el=document.getElementById('qrBlockContainer'); if(!el) return; el.innerHTML = qrBlockHtml(onlineNow()); wireQrBlockLinks(); }
+  function refresh(){
+    list.forEach(s=>{ const e=document.getElementById('gs-'+s.id); if(e) e.textContent = money(gaming(s)); });
+    const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
+    set('gGrand', money(grand())); set('gCredit', '− '+money(credit())); set('gDue', money(due()));
+    if(payment==='split'){ const ci=document.getElementById('cashAmountInput'), oi=document.getElementById('onlineAmountInput'); if(ci&&oi){ ci.value=due(); oi.value=0; } }
+    updateQr();
+  }
+  function render(){
+    const avail = products.filter(p=>p.stock>0);
+    root.innerHTML = `
+      <div class="overlay" id="ovGco"><div class="sheet">
+        <button class="close-x" data-close>✕</button>
+        <h3 style="color:var(--gold)">Combined checkout · ${list.length} screen${list.length>1?'s':''}</h3>
+        ${booking?`<div class="hint">📅 Booking for <b>${suEsc(booking.name||'')}</b></div>`:''}
+        ${list.map(s=>`
+          <div class="grp-row" style="border-color:${SYSTEMS[s.sys].color}55">
+            <div class="grp-top"><div style="color:${SYSTEMS[s.sys].color};font-weight:700">${SYSTEMS[s.sys].name} <span class="badge">${s.players}p</span></div><b class="gold mono" id="gs-${s.id}">${money(gaming(s))}</b></div>
+            <div class="hint">started ${fmtTime(s.start)} · ${rateLabel(s.sys,s.players)}${s.freeMin?(' · '+s.freeMin+' min free'):''}</div>
+            <label>Billable hours</label>
+            <input type="number" step="0.25" min="0.25" data-hrs="${s.id}" value="${hours[s.id]}">
+          </div>`).join('')}
+        ${pendingList().length?`<div class="divider"></div><label>Snacks already added</label>${pendingList().map(pi=>{const sc=list.find(x=>x.id===pi.sessionId);return '<div class="free-row"><span>'+pi.qty+'× '+pi.name+' <span class="mono">('+money(pi.qty*pi.sellPrice)+')</span> · '+SYSTEMS[sc.sys].short+'</span></div>';}).join('')}`:''}
+        ${avail.length?`
+          <div class="divider"></div><label>Add anything else now (optional)</label>
+          <div class="split-row"><div style="flex:2;"><select id="cartProductSelect"><option value="">Choose a product…</option>${avail.map(p=>'<option value="'+p.id+'"'+(pendingProductId===p.id?' selected':'')+'>'+p.name+' — '+money(p.sellPrice)+' ('+p.stock+' left)</option>').join('')}</select></div>
+          <div style="flex:1;"><div class="stepper"><button type="button" id="cartQtyDec">−</button><div class="n mono">${pendingQty}</div><button type="button" id="cartQtyInc">+</button></div></div></div>
+          <button class="action btn-ghost" id="addCartItemBtn" style="width:100%;margin-top:8px;">+ Add to bill</button>
+          ${cart.length?`<div style="margin-top:10px;">${cart.map((c,i)=>'<div class="free-row"><span>'+c.qty+'× '+c.name+' <span class="mono">('+money(c.qty*c.sellPrice)+')</span></span><button class="btn-mini" data-remove-cart="'+i+'" style="color:var(--danger)">Remove</button></div>').join('')}</div>`:''}`:''}
+        <div class="divider"></div>
+        <div class="free-row"><span>Combined bill</span><b class="mono" id="gGrand">${money(grand())}</b></div>
+        ${advance>0?`<div class="free-row"><span>Booking advance already paid (${booking&&booking.advanceMode==='online'||booking&&booking.source==='website'?'online':'cash'})</span><b class="mono" id="gCredit">− ${money(credit())}</b></div>`:''}
+        ${advance>grand()?`<div class="hint" style="color:var(--gold)">The advance is more than the bill — ${money(advance-grand())} is left over to hand back to the customer.</div>`:''}
+        <div class="stat" style="margin-top:10px;"><div class="label">${advance>0?'To collect now':'Total to collect'}</div><div class="value gold mono" id="gDue">${money(due())}</div></div>
+        ${due()>0?`
+        <label>Mode of payment</label>
+        <div class="pay-toggle">
+          <button data-pay="cash" class="${payment==='cash'?'selected':''}">Cash</button>
+          <button data-pay="online" class="${payment==='online'?'selected':''}">Online</button>
+          <button data-pay="split" class="${payment==='split'?'selected':''}">Split</button>
+        </div>
+        <div id="splitRow" style="display:${payment==='split'?'block':'none'};"><div class="split-row">
+          <div><label>Cash</label><input type="number" id="cashAmountInput" min="0" step="1" value="${due()}"></div>
+          <div><label>Online</label><input type="number" id="onlineAmountInput" min="0" step="1" value="0"></div></div>
+          <div class="hint">Edit either amount — the other adjusts to keep the total right.</div></div>`:'<div class="hint">Nothing left to collect — fully covered by the advance.</div>'}
+        <div id="qrBlockContainer"></div>
+        <div style="margin-top:16px;"><button class="action btn-primary" style="width:100%" id="confirmGroup">Confirm & save</button></div>
+        <div class="err-text" id="checkoutErr"></div>
+      </div></div>`;
+    wire(); updateQr();
+  }
+  function wire(){
+    root.querySelectorAll('[data-hrs]').forEach(i=>i.addEventListener('input', ()=>{
+      const hadDue = due()>0;
+      hours[i.getAttribute('data-hrs')] = Math.max(0.25, parseFloat(i.value)||0.25);
+      if(hadDue !== (due()>0) || (advance>0 && (advance>grand()) !== (document.getElementById('gCredit')===null))){
+        const id = i.getAttribute('data-hrs'), raw = i.value;
+        render();
+        const n = root.querySelector('[data-hrs="'+id+'"]'); if(n){ n.value = raw; n.focus(); }
+      } else refresh();
+    }));
+    const sel=document.getElementById('cartProductSelect'); if(sel) sel.addEventListener('change', e=>{ pendingProductId=e.target.value; });
+    const qd=document.getElementById('cartQtyDec'), qi=document.getElementById('cartQtyInc');
+    if(qd) qd.addEventListener('click', ()=>{ if(pendingQty>1){ pendingQty--; render(); } });
+    if(qi) qi.addEventListener('click', ()=>{ pendingQty++; render(); });
+    const ab=document.getElementById('addCartItemBtn');
+    if(ab) ab.addEventListener('click', ()=>{
+      if(!pendingProductId) return; const p=products.find(x=>x.id===pendingProductId); if(!p) return;
+      const ex=cart.find(c=>c.productId===p.id); if(ex) ex.qty+=pendingQty; else cart.push({productId:p.id,name:p.name,sellPrice:p.sellPrice,qty:pendingQty});
+      pendingProductId=''; pendingQty=1; render();
+    });
+    root.querySelectorAll('[data-remove-cart]').forEach(b=>b.addEventListener('click', ()=>{ cart.splice(parseInt(b.getAttribute('data-remove-cart')),1); render(); }));
+    root.querySelectorAll('[data-pay]').forEach(b=>b.addEventListener('click', ()=>{ payment=b.getAttribute('data-pay'); render(); }));
+    const ci=document.getElementById('cashAmountInput'), oi=document.getElementById('onlineAmountInput');
+    if(ci) ci.addEventListener('input', ()=>{ const t=due(); const c=Math.max(0,Math.min(t,parseFloat(ci.value||0))); oi.value=Math.round(t-c); updateQr(); });
+    if(oi) oi.addEventListener('input', ()=>{ const t=due(); const o=Math.max(0,Math.min(t,parseFloat(oi.value||0))); ci.value=Math.round(t-o); updateQr(); });
+    document.getElementById('confirmGroup').addEventListener('click', async function(){
+      const t = due(); let cashAmount = t;
+      if(due()>0){
+        if(payment==='online') cashAmount = 0;
+        else if(payment==='split') cashAmount = Math.round(parseFloat(document.getElementById('cashAmountInput').value||0));
+      }
+      const restore = setButtonBusy(this, 'Saving…');
+      try{
+        const data = await apiPost('checkoutGroup', {
+          groupId: gid, bookingId: list[0].bookingId||'', payment, cashAmount,
+          sessions: list.map(s=>({ id:s.id, hours:hours[s.id], hourly:hourlyRate(s.sys,s.players), gamingTotal:gaming(s) })),
+          items: cart.map(c=>({ productId:c.productId, qty:c.qty }))
+        });
+        applyState(data); syncOk(); closeModal(); renderCurrentTab();
+      }catch(e){
+        syncFail(e); restore(); showInlineError('checkoutErr', saveErrorText(e)); pollState();
+      }
+    });
+    root.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click', closeModal));
+    document.getElementById('ovGco').addEventListener('click', e=>{ if(e.target.id==='ovGco') closeModal(); });
+  }
+  render();
 }
 
 // ---------- Checkout modal ----------
@@ -2896,7 +3185,22 @@ function bookingEndMs(b){
   const dur = Number(b.durationHours) > 0 ? Number(b.durationHours) : 1;
   return start + dur*3600000;
 }
+function bookingScreens(b){
+  const arr = Array.isArray(b.screens) ? b.screens : [];
+  const legacyKey = bookingSysKey1(b);
+  if(arr.length){
+    return arr.map((sc,i)=>({ sys: SYSTEMS[sc.sys] ? sc.sys : ((i===0 && legacyKey) || sc.sys), players: Math.max(1, Number(sc.players)||1) }));
+  }
+  return [{ sys: legacyKey, players: Math.max(1, Number(b.players)||1) }];
+}
 function bookingSysKey(b){
+  const arr = Array.isArray(b.screens) ? b.screens : [];
+  if(arr.length && SYSTEMS[arr[0].sys]) return arr[0].sys;
+  return bookingSysKey1(b);
+}
+function bookingHasSys(b, k){ return bookingScreens(b).some(sc=>sc.sys===k); }
+function bookingStarted(b){ return activeSessions.some(s=>s.bookingId===b.id); }
+function bookingSysKey1(b){
   const n = String(b.deviceName||'').trim().toLowerCase();
   if(!n) return null;
   const keys = Object.keys(SYSTEMS);
@@ -2953,7 +3257,7 @@ function renderBookingsTab(){
   const el = document.getElementById('tab-bookings');
   bookingsLastMinute = Math.floor(Date.now()/60000);
   const all = upcomingBookings();
-  const shown = bookingConsoleFilter==='all' ? all : all.filter(b=>bookingSysKey(b)===bookingConsoleFilter);
+  const shown = bookingConsoleFilter==='all' ? all : all.filter(b=>bookingHasSys(b,bookingConsoleFilter));
   const advanceTotal = all.reduce((s,b)=>s+bookingAdvance(b),0);
   const pendingTotal = all.reduce((s,b)=>s+bookingPending(b),0);
 
@@ -2991,7 +3295,13 @@ function renderBookingsTab(){
       html += '<span class="bk-bar"></span>';
       html += '<div class="bk-head"><div>';
       html += '<div class="bk-time mono">'+(slotToMinutes(b.slot)==null ? suEsc(String(b.slot||'Time not set')) : fmtTime(start)+' <span>– '+fmtTime(end)+'</span>')+'</div>';
-      html += '<div class="bk-sys">'+suEsc(sysKey?SYSTEMS[sysKey].name:(b.deviceName||'Console'))+' · '+(Number(b.players)||1)+' player'+((Number(b.players)||1)>1?'s':'')+' · '+fmtDur(b.durationHours)+'</div>';
+      const scr = bookingScreens(b);
+      if(scr.length>1){
+        html += '<div class="bk-sys">'+scr.length+' screens · '+fmtDur(b.durationHours)+'</div>';
+        html += '<div class="bk-screens">'+scr.map(sc=>suEsc(SYSTEMS[sc.sys]?SYSTEMS[sc.sys].name:String(sc.sys))+' · '+sc.players+'p').join('  +  ')+'</div>';
+      } else {
+        html += '<div class="bk-sys">'+suEsc(sysKey?SYSTEMS[sysKey].name:(b.deviceName||'Console'))+' · '+(Number(b.players)||1)+' player'+((Number(b.players)||1)>1?'s':'')+' · '+fmtDur(b.durationHours)+'</div>';
+      }
       html += '</div>'+(when?'<div class="bk-when'+(when==='On now'?' now':'')+'">'+when+'</div>':'')+'</div>';
       html += '<div class="bk-who"><b>'+suEsc(b.name||'Customer')+'</b>'+(b.phone?' · <span class="mono">'+suEsc(b.phone)+'</span>':'')+(b.source==='website'?' <span class="badge">Website</span>':'')+'</div>';
       if(b.notes) html += '<div class="hint" style="margin-top:2px;">'+suEsc(b.notes)+'</div>';
@@ -2999,8 +3309,11 @@ function renderBookingsTab(){
       html += '<div class="bk-pill"><span>Advance paid</span><b class="mono">'+money(adv)+'</b></div>';
       html += '<div class="bk-pill'+(pend>0?' due':'')+'"><span>'+(pend>0?'Pending':'Pending')+'</span><b class="mono">'+(pend>0?money(pend):'Nil')+'</b></div>';
       html += '</div>';
+      const started = bookingStarted(b);
+      if(started) html += '<div class="hint" style="color:var(--ok);margin-top:8px;">▶ Running now — see the Live tab</div>';
+      else if(scr.every(sc=>SYSTEMS[sc.sys])) html += '<button class="action btn-primary" data-bk-start="'+suEsc(b.id)+'" style="width:100%;margin-top:10px;">▶ Start now'+(scr.length>1?' ('+scr.length+' screens)':'')+'</button>';
       html += '<div class="btn-row" style="margin-top:10px;">';
-      html += '<button class="action btn-ghost" data-bk-edit="'+suEsc(b.id)+'">Edit</button>';
+      html += '<button class="action btn-ghost" data-bk-edit=""'+suEsc(b.id)+'">Edit</button>';
       html += '<button class="action btn-danger" data-bk-cancel="'+suEsc(b.id)+'">Cancel booking</button>';
       html += '</div></div>';
     });
@@ -3011,6 +3324,7 @@ function renderBookingsTab(){
   el.querySelectorAll('[data-bkf]').forEach(btn=>btn.addEventListener('click', ()=>{
     bookingConsoleFilter = btn.getAttribute('data-bkf'); renderBookingsTab();
   }));
+  el.querySelectorAll('[data-bk-start]').forEach(btn=>btn.addEventListener('click', ()=>startBookingNow(btn.getAttribute('data-bk-start'), btn)));
   el.querySelectorAll('[data-bk-edit]').forEach(btn=>btn.addEventListener('click', ()=>openBookingModal(btn.getAttribute('data-bk-edit'))));
   el.querySelectorAll('[data-bk-cancel]').forEach(btn=>btn.addEventListener('click', ()=>openBookingCancel(btn.getAttribute('data-bk-cancel'))));
 }
@@ -3065,8 +3379,8 @@ function openBookingModal(editId){
   const root = document.getElementById('modal-root');
   const locked = !!(ex && ex.source==='website');          // paid online: amounts can't be changed here
   const sysKeys = Object.keys(SYSTEMS);
-  let sys = (ex && bookingSysKey(ex)) || sysKeys[0];
-  let players = ex ? Math.max(1, Number(ex.players)||1) : 1;
+  let screens = ex ? bookingScreens(ex).map(sc=>({ sys: SYSTEMS[sc.sys]?sc.sys:sysKeys[0], players: sc.players })) : [{ sys: sysKeys[0], players: 1 }];
+  let advMode = ex && ex.advanceMode==='online' ? 'online' : 'cash';
   let pendingTouched = !!ex;
   let forced = false;
   const nextHour = new Date(Date.now()+3600000);
@@ -3075,7 +3389,6 @@ function openBookingModal(editId){
   const defTime = ex ? (exMins==null ? '12:00' : pad(Math.floor(exMins/60))+':'+pad(exMins%60)) : pad(nextHour.getHours())+':00';
   const defDur = ex ? (Number(ex.durationHours)||1) : 1;
   const durOpts = []; for(let h=0.5; h<=8; h+=0.5) durOpts.push(h);
-  const sysOpts = sysKeys.map(k=>'<option value="'+k+'"'+(k===sys?' selected':'')+'>'+SYSTEMS[k].name+'</option>').join('');
 
   root.innerHTML = `
     <div class="overlay" id="ovBk">
@@ -3086,10 +3399,9 @@ function openBookingModal(editId){
         <input type="text" class="su-input" id="bkName" maxlength="60" placeholder="e.g. Aman" value="${ex?suEsc(ex.name):''}">
         <label>Phone (optional)</label>
         <input type="tel" class="su-input" id="bkPhone" inputmode="tel" maxlength="20" placeholder="Mobile number" value="${ex?suEsc(ex.phone||''):''}">
-        <label>Console</label>
-        <select id="bkSys">${sysOpts}</select>
-        <label>Players</label>
-        <div class="stepper"><button id="bkDec">−</button><div class="n mono" id="bkPlayers">1</div><button id="bkInc">+</button></div>
+        <label>Consoles &amp; players</label>
+        <div id="bkScreens"></div>
+        <button class="action btn-ghost" id="bkAddScreen" style="width:100%;margin-bottom:6px;">＋ Add another screen</button>
         <div class="split-row">
           <div><label>Date</label><input type="date" class="su-input" id="bkDate" value="${defDate}" ${ex?'':'min="'+todayKey()+'"'}></div>
           <div><label>Time</label><input type="time" class="su-input" id="bkTime" value="${defTime}"></div>
@@ -3102,6 +3414,8 @@ function openBookingModal(editId){
           <div><label>Pending (₹)</label><input type="number" class="su-input" id="bkPend" min="0" step="1" inputmode="numeric" placeholder="0" value="${ex?bookingPending(ex):''}" ${locked?'disabled':''}></div>
         </div>
         <div class="hint" id="bkTotal"></div>
+        <div id="bkAdvModeWrap"><label>Advance was paid by</label>
+        <div class="pay-toggle"><button data-advmode="cash">Cash</button><button data-advmode="online">Online / UPI</button></div></div>
         ${locked?'<div class="hint" style="color:var(--gold);">Paid online through the website — the amounts are locked. Date, time and console can still be changed.</div>':''}
         <label>Note (optional)</label>
         <input type="text" class="su-input" id="bkNotes" maxlength="120" placeholder="e.g. birthday group" value="${ex?suEsc(ex.notes||''):''}">
@@ -3113,22 +3427,30 @@ function openBookingModal(editId){
   const $ = id=>document.getElementById(id);
   const num = id=>Math.max(0, Math.round(parseFloat($(id).value)||0));
   const saveLabel = ex ? 'Save changes' : 'Add booking';
-  function estimate(){ return gamingPrice(sys, players, parseFloat($('bkDur').value)||1); }
+  function estimate(){ const d = parseFloat($('bkDur').value)||1; return screens.reduce((n,sc)=>n+gamingPrice(sc.sys, sc.players, d),0); }
+  function drawScreens(){
+    $('bkScreens').innerHTML = screens.map((sc,i)=>{
+      const taken = screens.filter((x,j)=>j!==i).map(x=>x.sys);
+      const opts = sysKeys.filter(k=>k===sc.sys || taken.indexOf(k)<0).map(k=>'<option value="'+k+'"'+(k===sc.sys?' selected':'')+'>'+SYSTEMS[k].name+'</option>').join('');
+      return '<div class="bk-scr-row"><select data-scr-sys="'+i+'">'+opts+'</select><div class="stepper"><button data-scr-dec="'+i+'">−</button><div class="n mono">'+sc.players+'</div><button data-scr-inc="'+i+'">+</button></div>'+(screens.length>1?'<button class="btn-mini" data-scr-del="'+i+'" style="color:var(--danger)">✕</button>':'')+'</div>';
+    }).join('');
+    $('bkAddScreen').style.display = screens.length>=sysKeys.length ? 'none' : '';
+    $('bkScreens').querySelectorAll('[data-scr-sys]').forEach(e=>e.addEventListener('change', ()=>{ const i=+e.getAttribute('data-scr-sys'); screens[i].sys=e.value; screens[i].players=Math.min(screens[i].players, SYSTEMS[e.value].max); drawScreens(); refresh(); }));
+    $('bkScreens').querySelectorAll('[data-scr-dec]').forEach(e=>e.addEventListener('click', ()=>{ const i=+e.getAttribute('data-scr-dec'); if(screens[i].players>1){ screens[i].players--; drawScreens(); refresh(); } }));
+    $('bkScreens').querySelectorAll('[data-scr-inc]').forEach(e=>e.addEventListener('click', ()=>{ const i=+e.getAttribute('data-scr-inc'); if(screens[i].players<SYSTEMS[screens[i].sys].max){ screens[i].players++; drawScreens(); refresh(); } }));
+    $('bkScreens').querySelectorAll('[data-scr-del]').forEach(e=>e.addEventListener('click', ()=>{ screens.splice(+e.getAttribute('data-scr-del'),1); drawScreens(); refresh(); }));
+  }
   function refresh(){
-    const max = SYSTEMS[sys].max;
-    if(players>max) players = max;
-    if(players<1) players = 1;
-    $('bkPlayers').textContent = players;
-    $('bkDec').disabled = players<=1; $('bkInc').disabled = players>=max;
     const est = estimate();
-    $('bkEst').textContent = 'Estimated price for this slot: '+money(est);
+    $('bkEst').textContent = (screens.length>1?'Estimated price for all '+screens.length+' screens: ':'Estimated price for this slot: ')+money(est);
+    root.querySelectorAll('[data-advmode]').forEach(b=>b.classList.toggle('selected', b.getAttribute('data-advmode')===advMode));
+    $('bkAdvModeWrap').style.display = (locked || num('bkAdv')<=0) ? 'none' : '';
     if(!pendingTouched && !locked) $('bkPend').value = Math.max(0, est - num('bkAdv')) || '';
     $('bkTotal').textContent = 'Booking total: '+money(num('bkAdv')+num('bkPend'));
   }
-  refresh();
-  $('bkSys').addEventListener('change', e=>{ sys = e.target.value; refresh(); });
-  $('bkDec').addEventListener('click', ()=>{ players--; refresh(); });
-  $('bkInc').addEventListener('click', ()=>{ players++; refresh(); });
+  drawScreens(); refresh();
+  $('bkAddScreen').addEventListener('click', ()=>{ const free = sysKeys.find(k=>!screens.some(sc=>sc.sys===k)); if(free){ screens.push({ sys: free, players: 1 }); drawScreens(); refresh(); } });
+  root.querySelectorAll('[data-advmode]').forEach(b=>b.addEventListener('click', ()=>{ advMode = b.getAttribute('data-advmode'); refresh(); }));
   $('bkDur').addEventListener('change', refresh);
   $('bkAdv').addEventListener('input', refresh);
   $('bkPend').addEventListener('input', ()=>{ pendingTouched = true; refresh(); });
@@ -3147,19 +3469,20 @@ function openBookingModal(editId){
     if(end<=Date.now()){ showInlineError('bkErr', 'That time has already passed — a booking in the past would vanish straight away.'); return; }
     // Same console at an overlapping time? Warn once; a second tap adds it anyway.
     const clash = bookings.find(b=>{
-      if(b.id===editId || bookingSysKey(b)!==sys || slotToMinutes(b.slot)==null) return false;
+      if(b.id===editId || !screens.some(sc=>bookingHasSys(b,sc.sys)) || slotToMinutes(b.slot)==null) return false;
       const bs = bookingStartMs(b), be = bookingEndMs(b);
       return bs!=null && be!=null && start<be && end>bs;
     });
     if(clash && !forced){
       forced = true; this.textContent = 'Add anyway';
-      showInlineError('bkErr', SYSTEMS[sys].name+' is already booked for '+suEsc(clash.name||'someone')+' at '+fmtTime(bookingStartMs(clash))+'–'+fmtTime(bookingEndMs(clash))+'. Tap “Add anyway” to keep both, or change the time.');
+      showInlineError('bkErr', 'One of these consoles is already booked for '+suEsc(clash.name||'someone')+' at '+fmtTime(bookingStartMs(clash))+'–'+fmtTime(bookingEndMs(clash))+'. Tap “Add anyway” to keep both, or change the time.');
       return;
     }
     const restore = setButtonBusy(this, 'Saving…');
     try{
       const payload = {
-        name, phone: $('bkPhone').value.trim(), sys, deviceName: SYSTEMS[sys].name, players,
+        name, phone: $('bkPhone').value.trim(), sys: screens[0].sys, deviceName: SYSTEMS[screens[0].sys].name, players: screens[0].players,
+        screens: screens.map(sc=>({ sys: sc.sys, players: sc.players, deviceName: SYSTEMS[sc.sys].name })), advanceMode: advMode,
         date, slot: pad(t[0])+':'+pad(t[1]), durationHours: dur,
         advanceAmount: num('bkAdv'), pendingAmount: num('bkPend'), notes: $('bkNotes').value.trim()
       };
