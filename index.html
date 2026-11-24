@@ -123,6 +123,32 @@
   .grp-row .grp-nums{display:flex;gap:14px;font-size:13px;align-items:center;}
   .multi-line{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;}
   .bk-screens{font-size:12.5px;color:var(--muted);margin-top:2px;}
+  .dayv{padding:12px 10px}
+  .dv-grid{display:grid;gap:3px;align-items:stretch}
+  .dv-col{text-align:center;font-size:10.5px;font-weight:700;padding-bottom:4px}
+  .dv-hr{font-size:10px;color:var(--muted);text-align:right;padding-right:6px;line-height:1;padding-top:2px;white-space:nowrap}
+  .dv-hr.now{color:var(--gold,#ffd34d);font-weight:700}
+  .dv-cell{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .dv-half{height:15px;border-radius:4px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);overflow:hidden;font-size:9px;line-height:13px;padding:0 3px;white-space:nowrap}
+  .dv-half.on{color:#fff}
+  .dv-key{display:inline-block;width:12px;height:12px;border-radius:3px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);vertical-align:-2px}
+  .dv-key.on{background:rgba(25,230,255,.3);border-color:var(--cyan,#19e6ff)}
+  .cal{padding:12px 10px}
+  .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .cal-title{font-weight:700;letter-spacing:.04em}
+  .cal-nav{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:var(--text,#fff);border-radius:10px;width:36px;height:36px;font-size:20px;cursor:pointer}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .cal-dow div{text-align:center;font-size:10.5px;color:var(--muted);padding:2px 0 6px;text-transform:uppercase;letter-spacing:.06em}
+  .cal-cell{position:relative;aspect-ratio:1/1.05;border-radius:10px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025);color:var(--text,#fff);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:5px 0 0;cursor:pointer;font:inherit;min-width:0}
+  .cal-cell.empty{background:none;border:none;cursor:default}
+  .cal-cell.past{opacity:.45}
+  .cal-cell.has{border-color:rgba(25,230,255,.35)}
+  .cal-cell.today .cal-num{color:#0a0a14;background:var(--gold,#ffd34d);border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:700}
+  .cal-cell.sel{border-color:var(--cyan,#19e6ff);box-shadow:0 0 0 1px var(--cyan,#19e6ff),0 0 14px rgba(25,230,255,.4);opacity:1}
+  .cal-num{font-size:13px;font-family:var(--mono,monospace)}
+  .cal-dots{display:flex;gap:3px;margin-top:4px}
+  .cal-dots i{width:6px;height:6px;border-radius:50%;display:block}
+  .cal-more{font-size:9px;color:var(--muted);margin-top:1px}
   .bk-scr-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
   .bk-scr-row select{flex:1;min-width:0}
   .free-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:10px;}
@@ -3253,11 +3279,96 @@ function bookingWhen(b){
   return '';
 }
 
+let bkView = 'cal', bkMonth = null, bkSelDay = null, bkZoom = false;
+function bkShiftDay(key, delta){
+  const p = key.split('-').map(Number);
+  const d = new Date(p[0], p[1]-1, p[2]+delta);
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+}
+// Hour-by-console grid for one day: every console is a column, every hour a
+// row split into two half-hours; a filled block is booked, an empty one is free.
+function bkDayViewHtml(dayKey, list){
+  const p = dayKey.split('-').map(Number);
+  const dayStart = new Date(p[0], p[1]-1, p[2]).getTime();
+  const keys = bookingConsoleFilter==='all' ? Object.keys(SYSTEMS) : [bookingConsoleFilter];
+  // per console: 48 half-hour slots -> booking or null
+  const slots = {}; keys.forEach(k=>{ slots[k] = new Array(48).fill(null); });
+  let minH = 8, maxH = 24;
+  list.forEach(b=>{
+    const bs = bookingStartMs(b), be = bookingEndMs(b); if(bs==null||be==null) return;
+    if(slotToMinutes(b.slot)==null) return;
+    const a = Math.max(0, Math.floor((bs-dayStart)/1800000)), z = Math.min(48, Math.ceil((be-dayStart)/1800000));
+    bookingScreens(b).forEach(sc=>{
+      if(!slots[sc.sys]) return;
+      for(let i=a;i<z;i++) slots[sc.sys][i] = b;
+    });
+    minH = Math.min(minH, Math.floor(a/2)); maxH = Math.max(maxH, Math.ceil(z/2));
+  });
+  const nowMs = Date.now();
+  let booked = 0, total = 0;
+  const cols = keys.length;
+  let h = '<div class="card dayv"><div class="dv-grid" style="grid-template-columns:44px repeat('+cols+',1fr)">';
+  h += '<div></div>'+keys.map(k=>'<div class="dv-col" style="color:'+SYSTEMS[k].color+'">'+SYSTEMS[k].short+'</div>').join('');
+  for(let hr=minH; hr<maxH; hr++){
+    const hourStart = dayStart + hr*3600000;
+    const nowRow = nowMs>=hourStart && nowMs<hourStart+3600000;
+    h += '<div class="dv-hr mono'+(nowRow?' now':'')+'">'+fmtTime(hourStart).replace(':00','')+'</div>';
+    keys.forEach(k=>{
+      h += '<div class="dv-cell">';
+      [0,1].forEach(half=>{
+        const b = slots[k][hr*2+half];
+        const prev = hr*2+half>0 ? slots[k][hr*2+half-1] : null;
+        total++; if(b) booked++;
+        if(b){
+          const c = bookingColor(b);
+          h += '<div class="dv-half on" style="background:'+c+'33;border-color:'+c+'">'+(prev!==b?'<span>'+suEsc((b.name||'').split(' ')[0])+'</span>':'')+'</div>';
+        } else h += '<div class="dv-half"></div>';
+      });
+      h += '</div>';
+    });
+  }
+  h += '</div>';
+  h += '<div class="hint" style="margin-top:10px;"><span class="dv-key on"></span> Booked &nbsp; <span class="dv-key"></span> Free · '+(booked/2)+' h booked, '+((total-booked)/2)+' h free across '+cols+' console'+(cols>1?'s':'')+' ('+fmtTime(dayStart+minH*3600000)+'–'+(maxH>=24?'12:00 AM':fmtTime(dayStart+maxH*3600000))+')</div>';
+  h += '</div>';
+  return h;
+}
+function bkCalendarHtml(shown){
+  const now = new Date();
+  if(!bkMonth) bkMonth = { y: now.getFullYear(), m: now.getMonth() };
+  if(!bkSelDay) bkSelDay = todayKey();
+  const y = bkMonth.y, m = bkMonth.m;
+  const byDay = {};
+  shown.forEach(b=>{ (byDay[b.date] = byDay[b.date]||[]).push(b); });
+  const first = new Date(y, m, 1), daysIn = new Date(y, m+1, 0).getDate();
+  const lead = first.getDay();   // Sunday-first
+  let h = '<div class="card cal">';
+  h += '<div class="cal-head"><button class="cal-nav" data-cal-nav="-1">‹</button><div class="cal-title">'+first.toLocaleDateString('en-IN',{month:'long',year:'numeric'})+'</div><button class="cal-nav" data-cal-nav="1">›</button></div>';
+  h += '<div class="cal-grid cal-dow">'+['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>'<div>'+d+'</div>').join('')+'</div>';
+  h += '<div class="cal-grid">';
+  for(let i=0;i<lead;i++) h += '<div class="cal-cell empty"></div>';
+  const today = todayKey();
+  for(let d=1; d<=daysIn; d++){
+    const key = y+'-'+pad(m+1)+'-'+pad(d);
+    const list = byDay[key]||[];
+    const past = key < today;
+    h += '<button class="cal-cell'+(key===today?' today':'')+(key===bkSelDay?' sel':'')+(past?' past':'')+(list.length?' has':'')+'" data-cal-day="'+key+'">';
+    h += '<span class="cal-num">'+d+'</span>';
+    if(list.length){
+      h += '<span class="cal-dots">'+list.slice(0,3).map(b=>'<i style="background:'+bookingColor(b)+'"></i>').join('')+'</span>';
+      if(list.length>3) h += '<span class="cal-more">+'+(list.length-3)+'</span>';
+    }
+    h += '</button>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
 function renderBookingsTab(){
   const el = document.getElementById('tab-bookings');
   bookingsLastMinute = Math.floor(Date.now()/60000);
   const all = upcomingBookings();
-  const shown = bookingConsoleFilter==='all' ? all : all.filter(b=>bookingHasSys(b,bookingConsoleFilter));
+  const filtered = bookingConsoleFilter==='all' ? all : all.filter(b=>bookingHasSys(b,bookingConsoleFilter));
+  const shown = bkView==='cal' ? filtered.filter(b=>b.date===(bkSelDay||todayKey())) : filtered;
   const advanceTotal = all.reduce((s,b)=>s+bookingAdvance(b),0);
   const pendingTotal = all.reduce((s,b)=>s+bookingPending(b),0);
 
@@ -3268,6 +3379,7 @@ function renderBookingsTab(){
   html += '<div class="stat"><div class="label">Pending</div><div class="value gold mono">'+money(pendingTotal)+'</div></div>';
   html += '</div>';
   html += '<button class="action btn-primary" id="bkAdd" style="width:100%;margin-bottom:14px;">＋ New booking</button>';
+  html += '<div class="pay-toggle" style="margin-bottom:12px;"><button data-bk-view="cal" class="'+(bkView==='cal'?'selected':'')+'">📅 Calendar</button><button data-bk-view="list" class="'+(bkView==='list'?'selected':'')+'">☰ List</button></div>';
 
   html += '<div class="bk-filter">';
   html += '<button class="bk-chip'+(bookingConsoleFilter==='all'?' on':'')+'" data-bkf="all">All</button>';
@@ -3276,14 +3388,25 @@ function renderBookingsTab(){
   });
   html += '</div>';
 
+  if(bkView==='cal' && bkZoom){
+    const dk = bkSelDay||todayKey();
+    html += '<div class="cal-head" style="margin-bottom:10px"><button class="cal-nav" data-dv-nav="-1">‹</button><div class="cal-title">'+suEsc(bookingDayLabel(dk))+' <span class="hint" style="font-weight:400">'+dk.split('-').reverse().join('/')+'</span></div><button class="cal-nav" data-dv-nav="1">›</button></div>';
+    html += '<button class="action btn-ghost" data-dv-back style="width:100%;margin-bottom:10px;">⤺ Back to month</button>';
+    html += bkDayViewHtml(dk, filtered.filter(b=>b.date===dk));
+    html += '<div class="bk-day" style="margin-top:14px;">'+shown.length+' booking'+(shown.length===1?'':'s')+' this day</div>';
+  } else if(bkView==='cal'){
+    html += bkCalendarHtml(filtered);
+    html += '<button class="action btn-ghost" data-dv-zoom style="width:100%;margin-top:10px;">🔍 Zoom into '+suEsc(bookingDayLabel(bkSelDay||todayKey()))+' · hour view</button>';
+    html += '<div class="bk-day" style="margin-top:14px;">'+suEsc(bookingDayLabel(bkSelDay||todayKey()))+' · '+shown.length+' booking'+(shown.length===1?'':'s')+'</div>';
+  }
   if(shown.length===0){
-    html += '<div class="card empty">'+(all.length===0
+    html += '<div class="card empty">'+(bkView==='cal' ? 'Nothing booked on this day. Tap “New booking” to add one.' : (all.length===0
       ? 'No upcoming bookings. Tap “New booking” to add one — it clears itself once the time has passed.'
-      : 'No upcoming bookings for this console.')+'</div>';
+      : 'No upcoming bookings for this console.'))+'</div>';
   } else {
     let lastDay = null;
     shown.forEach(b=>{
-      if(b.date!==lastDay){
+      if(bkView!=='cal' && b.date!==lastDay){
         lastDay = b.date;
         html += '<div class="bk-day">'+suEsc(bookingDayLabel(b.date))+'</div>';
       }
@@ -3321,6 +3444,19 @@ function renderBookingsTab(){
   el.innerHTML = html;
 
   document.getElementById('bkAdd').addEventListener('click', ()=>openBookingModal(null));
+  el.querySelectorAll('[data-dv-zoom]').forEach(b=>b.addEventListener('click', ()=>{ bkZoom = true; renderBookingsTab(); }));
+  el.querySelectorAll('[data-dv-back]').forEach(b=>b.addEventListener('click', ()=>{ bkZoom = false; renderBookingsTab(); }));
+  el.querySelectorAll('[data-dv-nav]').forEach(b=>b.addEventListener('click', ()=>{
+    bkSelDay = bkShiftDay(bkSelDay||todayKey(), parseInt(b.getAttribute('data-dv-nav')));
+    const q = bkSelDay.split('-').map(Number); bkMonth = { y:q[0], m:q[1]-1 };
+    renderBookingsTab();
+  }));
+  el.querySelectorAll('[data-bk-view]').forEach(b=>b.addEventListener('click', ()=>{ bkView = b.getAttribute('data-bk-view'); renderBookingsTab(); }));
+  el.querySelectorAll('[data-cal-day]').forEach(b=>b.addEventListener('click', ()=>{ const k = b.getAttribute('data-cal-day'); if(k===bkSelDay){ bkZoom = true; } bkSelDay = k; renderBookingsTab(); }));
+  el.querySelectorAll('[data-cal-nav]').forEach(b=>b.addEventListener('click', ()=>{
+    const d = new Date(bkMonth.y, bkMonth.m + parseInt(b.getAttribute('data-cal-nav')), 1);
+    bkMonth = { y: d.getFullYear(), m: d.getMonth() }; renderBookingsTab();
+  }));
   el.querySelectorAll('[data-bkf]').forEach(btn=>btn.addEventListener('click', ()=>{
     bookingConsoleFilter = btn.getAttribute('data-bkf'); renderBookingsTab();
   }));
